@@ -5,9 +5,13 @@ class SearchAgent:
         self.rules = rules
         self.depth_limit = depth_limit
         self.use_alpha_beta = use_alpha_beta
+        self.states_visited = 0
+        self.max_depth = 0
 
 
     def search(self, state):
+            self.states_visited = 1  # The root is visited at depth 0.
+            self.max_depth = 0
             max_player = state.current_turn
             best_action = None
             best_score = float("-inf")
@@ -28,6 +32,8 @@ class SearchAgent:
             return best_action, best_score
     
     def _value(self, state, max_player, alpha, beta, depth):
+        self.states_visited += 1
+        self.max_depth = max(self.max_depth, depth)
         if self.rules.terminal_test(state):
             return self.rules.utility(state, max_player)
 
