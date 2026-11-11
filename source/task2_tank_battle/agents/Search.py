@@ -5,7 +5,28 @@ class SearchAgent:
         self.depth_limit = depth_limit
         self.use_alpha_beta = use_alpha_beta
 
-    def _value(self, state, max_player):
+
+    def search(self, state):
+            max_player = state.current_turn
+            best_action = None
+            best_score = float("-inf")
+            alpha = float("-inf")
+            beta = float("inf")
+    
+            for action in self.rules.actions(state):
+                child_state = self.rules.result(state, action)
+                score = self._value(child_state, max_player, alpha, beta)
+
+                if score > best_score:
+                    best_action = action
+                    best_score = score
+
+                if self.use_alpha_beta:
+                    alpha = max(alpha, best_score)
+            
+            return best_action, best_score
+    
+    def _value(self, state, max_player, alpha, beta):
         if self.rules.terminal_test(state):
             return self.rules.utility(state, max_player)
 
@@ -14,28 +35,25 @@ class SearchAgent:
 
         for action in self.rules.actions(state):
             child_state = self.rules.result(state, action)
-            child_score = self._value(child_state, max_player)
+            child_score = self._value(child_state, max_player, alpha, beta)
 
             if is_max_turn:
                 best_score = max(best_score, child_score)
             else:
                 best_score = min(best_score, child_score)
 
+            if self.use_alpha_beta: # Dùng Alpha-Beta Pruning
+                if is_max_turn:
+                    alpha = max(alpha, best_score)
+                else:
+                    beta = min(beta, best_score)
+                
+                if beta <= alpha:
+                    break
+
         return best_score
 
-    def search(self, state):
-        max_player = state.current_turn
-        best_action = None
-        best_score = float("-inf")
-
-        for action in self.rules.actions(state):
-            child_state = self.rules.result(state, action)
-            score = self._value(child_state, max_player)
-            if score > best_score:
-                best_action = action
-                best_score = score
-
-        return best_action, best_score
+    
     
 
 
