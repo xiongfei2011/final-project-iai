@@ -1,3 +1,4 @@
+from .Evaluation import evaluate
 class SearchAgent:
 
     def __init__(self, rules, depth_limit, use_alpha_beta):
@@ -15,7 +16,7 @@ class SearchAgent:
     
             for action in self.rules.actions(state):
                 child_state = self.rules.result(state, action)
-                score = self._value(child_state, max_player, alpha, beta)
+                score = self._value(child_state, max_player, alpha, beta, depth=1)
 
                 if score > best_score:
                     best_action = action
@@ -26,16 +27,19 @@ class SearchAgent:
             
             return best_action, best_score
     
-    def _value(self, state, max_player, alpha, beta):
+    def _value(self, state, max_player, alpha, beta, depth):
         if self.rules.terminal_test(state):
             return self.rules.utility(state, max_player)
 
+        if self.depth_limit is not None and depth >= self.depth_limit: # Dùng heuristic cho Minimax
+            return evaluate(state, max_player)
+        
         is_max_turn = state.current_turn == max_player # Nếu node gốc là 1 current_turn là 0 thì đang ở MIN và ngược lại
         best_score = float("-inf") if is_max_turn else float("inf")
 
         for action in self.rules.actions(state):
             child_state = self.rules.result(state, action)
-            child_score = self._value(child_state, max_player, alpha, beta)
+            child_score = self._value(child_state, max_player, alpha, beta, depth + 1)
 
             if is_max_turn:
                 best_score = max(best_score, child_score)
@@ -53,10 +57,10 @@ class SearchAgent:
 
         return best_score
 
+    def choose_action(self, state):
+        action, _ = self.search(state)
+        return action
     
-    
-
-
 def create_minimax_agent(rules):
     return SearchAgent(rules=rules, depth_limit=None, use_alpha_beta=False)
 
