@@ -13,15 +13,18 @@ from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from statistics import median
 
-from .agents.Search import (
+from .agents.search import (
     create_alpha_beta_agent,
     create_heuristic_minimax_agent,
     create_heuristic_minimax_alpha_beta_agent,
     create_minimax_agent,
 )
-from .config import FIRE
-from .game.Rules import GameRules
-from .game.State import create_initial_state
+from .config import DEFAULT_SEARCH_DEPTH
+from .game.actions import Direction
+from .game.entities import Bullet, Position
+from .game.rules import GameRules
+from .game.state import GameState, create_state_from_layout
+from .game.map_loader import MapLayout
 
 
 TITLE = "T2-03 - Tank Battle Search Benchmark"
@@ -42,14 +45,15 @@ class Scenario:
     height: int
     target_column: int
     defender_column: int
+    impact_in: int
 
 
-# A fires before the measured decision. B's base stays on the shot's path,
-# which bounds the search horizon in these layouts.
+# The incoming bullet is already in range of B's base at the measured tick.
+# Both tanks are too far away to intercept it before it reaches the base.
 SCENARIOS = {
-    "incoming_shot": Scenario(height=5, target_column=5, defender_column=5),
-    "countershot": Scenario(height=7, target_column=10, defender_column=4),
-    "long_crossfire": Scenario(height=7, target_column=16, defender_column=12),
+    "incoming_shot": Scenario(height=5, target_column=5, defender_column=5, impact_in=1),
+    "countershot": Scenario(height=7, target_column=10, defender_column=3, impact_in=2),
+    "long_crossfire": Scenario(height=7, target_column=16, defender_column=12, impact_in=3),
 }
 
 
@@ -78,16 +82,30 @@ class ResultRow:
     timeout_ms: float
 
 
-def create_scenario(name, rules):
-    layout = SCENARIOS[name]
-    state = create_initial_state()
-    state.game_map = {"height": layout.height, "width": layout.target_column}
-    state.walls.clear()
-    state.tanks[0].update(position=(2, 1), direction="RIGHT")
-    state.tanks[1].update(position=(layout.height, layout.defender_column), direction="LEFT")
-    state.bases[0].update(position=(layout.height, 1), hp=1)
-    state.bases[1].update(position=(2, layout.target_column), hp=1)
-    return rules.result(state, FIRE)
+def create_scenario(name: str, rules: GameRules) -> GameState:
+    """Build a bounded search position without advancing the game rules."""
+    scenario = SCENARIOS[name]
+    layout = MapLayout(
+        height=scenario.height,
+        width=scenario.target_column,
+        tank_positions=((2, 1), (scenario.height, scenario.defender_column)),
+        base_positions=((scenario.height, 1), (2, scenario.target_column)),
+        wall_positions=(),
+    )
+    state = create_state_from_layout(layout)
+    state.tanks[0].direction = Direction.RIGHT
+    state.tanks[1].direction = Direction.LEFT
+    for base in state.bases.values():
+        base.hp = 1
+    state.current_turn = 1
+    state.bullets.append(
+        Bullet(
+            position=Position(2, scenario.target_column - scenario.impact_in),
+            direction=Direction.RIGHT,
+            steps_left=scenario.impact_in,
+        )
+    )
+    return state
 
 
 def create_agent(configuration, rules, depth):
@@ -185,8 +203,11 @@ def compare_pair(plain, pruned, depth):
     rules = GameRules()
     state = create_scenario(plain.scenario, rules)
     agent = create_agent(plain.configuration, rules, depth)
-    child = rules.result(state, pruned.action)
-    exact_value = agent._value(child, state.current_turn, -math.inf, math.inf, depth=1)
+    player = state.current_turn
+    replies = rules.actions(state, 1 - player)
+    exact_value = agent._action_value(
+        state, player, pruned.action, replies, -math.inf, math.inf, depth=0
+    )
     if not math.isclose(exact_value, plain.search_value, abs_tol=1e-12):
         raise RuntimeError(f"{label}: {pruned.action} is not tied for the best value")
     return f"{label}: {plain.action} and {pruned.action} tie at {exact_value:g}"
@@ -223,7 +244,10 @@ def write_csv(path, rows):
 def main():
     parser = argparse.ArgumentParser(description=TITLE)
     parser.add_argument("--runs", type=int, default=5, help="Repetitions per configuration")
-    parser.add_argument("--depth", type=int, default=3, help="Shared heuristic depth limit in plies")
+    parser.add_argument(
+        "--depth", type=int, default=DEFAULT_SEARCH_DEPTH,
+        help="Shared heuristic depth limit in ticks",
+    )
     parser.add_argument("--timeout-ms", type=float, default=2000, help="Search deadline per run in ms")
     parser.add_argument("--csv", type=Path, default=Path(__file__).with_name("benchmark_results.csv"))
     args = parser.parse_args()
@@ -260,7 +284,8 @@ def main():
             comparisons.append(compare_pair(by_configuration[plain], by_configuration[pruned], args.depth))
 
     print("States count the root at depth 0 and every visited search node, including leaves.")
-    print("One ply is one player action. Time, states and depth use medians of completed runs.")
+    print("One tick applies both players' actions and moves bullets one cell.")
+    print("Time, states and depth use medians of completed runs.")
     print("Any timed-out run marks its row as timeout. Metrics are blank when no run completes.")
     print_table(rows)
     print("\nSearch value checks")
