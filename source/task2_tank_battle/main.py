@@ -13,6 +13,18 @@ from .ui.match_session import MatchSession
 from .ui.pygame_app import run_window
 
 
+def parse_standard_depth(value: str) -> int | None:
+    if value.lower() == "none":
+        return None
+    try:
+        depth = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("expected a positive integer or 'none'") from None
+    if depth < 1:
+        raise argparse.ArgumentTypeError("expected a positive integer or 'none'")
+    return depth
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=f"{config.WINDOW_TITLE} - Pygame")
     mode = parser.add_mutually_exclusive_group()
@@ -29,7 +41,7 @@ def main() -> None:
     board.add_argument(
         "--demo",
         action="store_true",
-        help="Start from the benchmark crossfire scenario",
+        help="Start from the benchmark draw scenario",
     )
     board.add_argument(
         "--map",
@@ -51,7 +63,14 @@ def main() -> None:
         "--depth",
         type=int,
         default=config.DEFAULT_SEARCH_DEPTH,
-        help="Search depth in ticks for the built-in heuristic agents",
+        help="Default search depth in ticks for the built-in agents",
+    )
+    parser.add_argument(
+        "--standard-depth",
+        type=parse_standard_depth,
+        default=argparse.SUPPRESS,
+        metavar="TICKS|none",
+        help="Override --depth for Minimax and Alpha-Beta",
     )
     parser.add_argument(
         "--turn-ms",
@@ -62,6 +81,7 @@ def main() -> None:
     args = parser.parse_args()
     if args.depth < 1 or args.turn_ms < 1:
         parser.error("--depth and --turn-ms must be positive integers")
+    standard_depth = getattr(args, "standard_depth", args.depth)
 
     rules = GameRules()
     map_loaders = {
@@ -73,7 +93,7 @@ def main() -> None:
         from .benchmark import create_scenario
 
         map_name = "Demo"
-        map_loaders[map_name] = partial(create_scenario, config.DEMO_SCENARIO, rules)
+        map_loaders[map_name] = partial(create_scenario, config.DEMO_SCENARIO)
     else:
         map_path = (args.map_path or config.DEFAULT_MAP_PATH).resolve()
         map_name = map_path.name
@@ -89,8 +109,11 @@ def main() -> None:
     def make_match(initial_state: GameState, specs: tuple[str, str]) -> Match:
         agents = {}
         for player, spec in enumerate(specs):
+            depth_limit = args.depth
+            if spec in (config.MINIMAX_AGENT, config.ALPHA_BETA_AGENT):
+                depth_limit = standard_depth
             try:
-                agents[player] = load_agent(spec, rules, depth_limit=args.depth)
+                agents[player] = load_agent(spec, rules, depth_limit=depth_limit)
             except Exception as error:
                 name = config.PLAYER_NAMES[player]
                 raise ValueError(f"Could not load Player {name} agent {spec!r}: {error}") from error

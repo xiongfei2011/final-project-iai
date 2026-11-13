@@ -22,21 +22,19 @@ from .search import (
 
 _AgentFactory = Callable[..., object]
 
-HEURISTIC_AGENTS = {
+BUILT_IN_AGENTS = {
+    MINIMAX_AGENT: create_minimax_agent,
+    ALPHA_BETA_AGENT: create_alpha_beta_agent,
     HEURISTIC_AGENT: create_heuristic_minimax_agent,
     HEURISTIC_ALPHA_BETA_AGENT: create_heuristic_minimax_alpha_beta_agent,
 }
 
-BUILT_IN_AGENTS = {
-    MINIMAX_AGENT: create_minimax_agent,
-    ALPHA_BETA_AGENT: create_alpha_beta_agent,
-    **HEURISTIC_AGENTS,
-}
 
-
-def load_agent(spec: str, rules: GameRules, depth_limit: int = DEFAULT_SEARCH_DEPTH) -> Agent:
+def load_agent(
+    spec: str, rules: GameRules, depth_limit: int | None = DEFAULT_SEARCH_DEPTH
+) -> Agent:
     factory = _resolve_factory(spec)
-    if spec in HEURISTIC_AGENTS:
+    if spec in BUILT_IN_AGENTS:
         agent = factory(rules, depth_limit=depth_limit)
     else:
         agent = factory(rules)

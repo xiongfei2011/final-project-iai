@@ -1,8 +1,6 @@
 """Maximin search over simultaneous actions, with optional alpha-beta pruning."""
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterator
-from dataclasses import dataclass
 from math import inf
 from typing import Protocol, runtime_checkable
 
@@ -15,27 +13,8 @@ from .evaluation import Evaluator, HeuristicEvaluator
 
 @runtime_checkable
 class Agent(Protocol):
-    def choose_action(self, state: GameState) -> Action | str | None: # Trả về action
+    def choose_action(self, state: GameState) -> Action | str | None:  # Trả về action
         ...
-
-
-@dataclass
-class _SearchFrame:
-    """Keep one board's progress while a child board is being evaluated."""
-
-    state: GameState
-    key: GameStateKey
-    actions: Iterator[str]
-    replies: list[str]
-    alpha: float
-    beta: float
-    best_action: str | None = None
-    best_score: float = -inf
-    action: str | None = None
-    reply_index: int = 0
-    reply_score: float = inf
-    reply_alpha: float = -inf
-    reply_beta: float = inf
 
 
 class SearchAgent(ABC):
@@ -46,8 +25,12 @@ class SearchAgent(ABC):
         depth_limit: int | None,
         *,
         evaluator: Evaluator | None = None,
-        opponent_model: Agent | None = None
+        opponent_model: Agent | None = None,
     ) -> None:
+        if depth_limit is None and evaluator is not None:
+            raise ValueError("Heuristic search requires a depth limit")
+        if depth_limit is not None and depth_limit < 1:
+            raise ValueError("Search depth must be a positive integer")
         self.rules = rules
         self.depth_limit = depth_limit
         self.evaluator = evaluator
@@ -58,11 +41,11 @@ class SearchAgent(ABC):
     def search(
         self, state: GameState, *, root_action: str | None = None
     ) -> tuple[str | None, float]:
-        """Find the best action, or score one specified legal root action."""
         self.states_visited = 1  # The root is visited at depth 0.
         self.max_depth = 0
         max_player = state.current_turn
         actions = self.rules.actions(state, max_player)
+
         if root_action is not None:
             if root_action not in actions:
                 raise ValueError(f"Illegal root action: {root_action!r}")
@@ -70,75 +53,122 @@ class SearchAgent(ABC):
         if self.rules.terminal_test(state):
             return None, self.rules.utility(state, max_player)
 
-        root_key = state.search_key()
-        root = _SearchFrame(
-            state, root_key, iter(actions), self._opponent_replies(state, max_player), -inf, inf
+        if root_action is None and state.played_states:
+            actions = self._prefer_new_boards(state, max_player, actions)
+        return self._best_action(
+            state, max_player, actions, -inf, inf, depth=0, visited_states=set()
         )
-        stack = [root]
-        visited_states = {root_key}
-        while True:
-            frame = stack[-1]
-            if frame.action is None:
-                if frame.alpha < frame.beta:
-                    frame.action = next(frame.actions, None)
-                if frame.action is None:
-                    stack.pop()
-                    # Backtrack so sibling branches can evaluate this board again.
-                    visited_states.remove(frame.key)
-                    if not stack:
-                        return frame.best_action, frame.best_score
-                    self._record_reply(stack[-1], frame.best_score)
-                    continue
-                frame.reply_index = 0
-                frame.reply_score = inf
-                frame.reply_alpha, frame.reply_beta = frame.alpha, frame.beta
 
-            if frame.reply_index == len(frame.replies) or frame.reply_beta <= frame.reply_alpha:
-                if frame.reply_score > frame.best_score:
-                    frame.best_action, frame.best_score = frame.action, frame.reply_score
-                frame.alpha, frame.beta = self._update_bounds(
-                    frame.alpha, frame.beta, frame.best_score, maximizing=True
+    def _prefer_new_boards(
+        self, state: GameState, player: int, actions: list[str]
+    ) -> list[str]:
+        replies = self.rules.actions(state, 1 - player)
+
+        def count_repeats(action: str) -> int:
+            repeats = 0
+            for reply in replies:
+                child = self.rules.result_tick(state, {player: action, 1 - player: reply})
+                if child.search_key() in state.played_states:
+                    repeats += 1
+            return repeats
+
+        # Earlier actions win score ties, so try actions with fewer repeats first.
+        return sorted(actions, key=count_repeats)
+
+    def _best_action(
+        self,
+        state: GameState,
+        max_player: int,
+        actions: list[str],
+        alpha: float,
+        beta: float,
+        depth: int,
+        visited_states: set[GameStateKey],
+    ) -> tuple[str | None, float]:
+        replies = self._opponent_replies(state, max_player)
+        best_action = None
+        best_score = -inf
+        state_key = state.search_key()
+        visited_states.add(state_key)
+
+        try:
+            for action in actions:
+                score = self._action_value(
+                    state,
+                    max_player,
+                    action,
+                    replies,
+                    alpha,
+                    beta,
+                    depth,
+                    visited_states,
                 )
-                frame.action = None
-                continue
+                if score > best_score:
+                    best_action, best_score = action, score
+                alpha, beta = self._update_bounds(
+                    alpha, beta, best_score, maximizing=True
+                )
+                if beta <= alpha:
+                    break
+        finally:
+            # Backtrack so sibling branches can evaluate this board independently.
+            visited_states.remove(state_key)
+        return best_action, best_score
 
-            reply = frame.replies[frame.reply_index]
-            frame.reply_index += 1
-            actions_for_tick = {max_player: frame.action, 1 - max_player: reply}
-            child = self.rules.result_tick(frame.state, actions_for_tick)
-            depth = len(stack)
-            self.states_visited += 1
-            self.max_depth = max(self.max_depth, depth)
-            child_key = child.search_key()
-            if child_key in visited_states:
-                # A repetition contributes a draw to MIN's comparison.
-                self._record_reply(frame, 0.0)
-                continue
+    def _action_value(
+        self,
+        state: GameState,
+        max_player: int,
+        action: str,
+        replies: list[str],
+        alpha: float,
+        beta: float,
+        depth: int,
+        visited_states: set[GameStateKey],
+    ) -> float:
+        worst_score = inf
 
-            score = self._leaf_value(child, max_player, depth)
-            if score is not None:
-                self._record_reply(frame, score)
-            else:
-                visited_states.add(child_key)
-                stack.append(_SearchFrame(
-                    child, child_key, iter(self.rules.actions(child, max_player)),
-                    self._opponent_replies(child, max_player), frame.reply_alpha, frame.reply_beta,
-                ))
+        for reply in replies:
+            child = self.rules.result_tick(
+                state, {max_player: action, 1 - max_player: reply}
+            )
+            score = self._value(
+                child, max_player, alpha, beta, depth + 1, visited_states
+            )
+            worst_score = min(worst_score, score)
+            alpha, beta = self._update_bounds(
+                alpha, beta, worst_score, maximizing=False
+            )
+            if beta <= alpha:
+                break
+        return worst_score
 
-    def _record_reply(self, frame: _SearchFrame, score: float) -> None:
-        frame.reply_score = min(frame.reply_score, score)
-        frame.reply_alpha, frame.reply_beta = self._update_bounds(
-            frame.reply_alpha, frame.reply_beta, frame.reply_score, maximizing=False
-        )
+    def _value(
+        self,
+        state: GameState,
+        max_player: int,
+        alpha: float,
+        beta: float,
+        depth: int,
+        visited_states: set[GameStateKey],
+    ) -> float:
 
-    def _leaf_value(self, state: GameState, max_player: int, depth: int) -> float | None:
+        self.states_visited += 1
+        self.max_depth = max(self.max_depth, depth)
+
+        if state.search_key() in visited_states:
+            return 0.0
         if self.rules.terminal_test(state):
             return self.rules.utility(state, max_player)
         if self.depth_limit is not None and depth >= self.depth_limit:
             if self.evaluator is not None:
                 return self.evaluator.evaluate(state, max_player)
             return 0.0
-        return None
+
+        actions = self.rules.actions(state, max_player)
+        return self._best_action(
+            state, max_player, actions, alpha, beta, depth, visited_states
+        )[1]
 
     def _opponent_replies(self, state: GameState, max_player: int) -> list[str]:
         opponent = 1 - max_player
@@ -185,13 +215,13 @@ class AlphaBetaAgent(SearchAgent):
 
 
 def create_minimax_agent(
-    rules: GameRules, depth_limit: int | None = None
+    rules: GameRules, depth_limit: int | None = DEFAULT_SEARCH_DEPTH
 ) -> MinimaxAgent:
     return MinimaxAgent(rules, depth_limit)
 
 
 def create_alpha_beta_agent(
-    rules: GameRules, depth_limit: int | None = None
+    rules: GameRules, depth_limit: int | None = DEFAULT_SEARCH_DEPTH
 ) -> AlphaBetaAgent:
     return AlphaBetaAgent(rules, depth_limit)
 

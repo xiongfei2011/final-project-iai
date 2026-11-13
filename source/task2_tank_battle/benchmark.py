@@ -19,12 +19,9 @@ from .agents.search import (
     create_heuristic_minimax_alpha_beta_agent,
     create_minimax_agent,
 )
-from .config import DEFAULT_SEARCH_DEPTH
-from .game.actions import Direction
-from .game.entities import Bullet, Position
+from .config import BASE_INITIAL_HP, DEFAULT_SEARCH_DEPTH, MAPS_DIR
 from .game.rules import GameRules
-from .game.state import GameState, create_state_from_layout
-from .game.map_loader import MapLayout
+from .game.state import GameState, create_initial_state
 
 
 TITLE = "T2-03 - Tank Battle Search Benchmark"
@@ -40,20 +37,12 @@ CONFIGURATIONS = {
 }
 
 
-@dataclass(frozen=True)
-class Scenario:
-    height: int
-    target_column: int
-    defender_column: int
-    impact_in: int
-
-
-# The incoming bullet is already in range of B's base at the measured tick.
-# Both tanks are too far away to intercept it before it reaches the base.
+# Each entry gives the starting HP of both bases on its text map.
 SCENARIOS = {
-    "incoming_shot": Scenario(height=5, target_column=5, defender_column=5, impact_in=1),
-    "countershot": Scenario(height=7, target_column=10, defender_column=3, impact_in=2),
-    "long_crossfire": Scenario(height=7, target_column=16, defender_column=12, impact_in=3),
+    "opening_win": 1,
+    "opening_draw": 1,
+    "opening_loss": 1,
+    "heuristic_cutoff": BASE_INITIAL_HP,
 }
 
 
@@ -78,48 +67,30 @@ class ResultRow:
     status: str
     action: str | None
     search_value: float | None
-    depth_limit: int | None
+    depth_limit: int
     timeout_ms: float
 
 
-def create_scenario(name: str, rules: GameRules) -> GameState:
-    """Build a bounded search position without advancing the game rules."""
-    scenario = SCENARIOS[name]
-    layout = MapLayout(
-        height=scenario.height,
-        width=scenario.target_column,
-        tank_positions=((2, 1), (scenario.height, scenario.defender_column)),
-        base_positions=((scenario.height, 1), (2, scenario.target_column)),
-        wall_positions=(),
-    )
-    state = create_state_from_layout(layout)
-    state.tanks[0].direction = Direction.RIGHT
-    state.tanks[1].direction = Direction.LEFT
+def create_scenario(name: str) -> GameState:
+    """Load a fresh opening for A to search, with no shots on the board."""
+    base_hp = SCENARIOS[name]
+    state = create_initial_state(MAPS_DIR / "benchmark" / f"{name}.txt")
     for base in state.bases.values():
-        base.hp = 1
-    state.current_turn = 1
-    state.bullets.append(
-        Bullet(
-            position=Position(2, scenario.target_column - scenario.impact_in),
-            direction=Direction.RIGHT,
-            steps_left=scenario.impact_in,
-        )
-    )
+        base.hp = base_hp
+    state.current_turn = 0
     return state
 
 
 def create_agent(configuration, rules, depth):
-    factory, uses_heuristic = CONFIGURATIONS[configuration]
-    if uses_heuristic:
-        return factory(rules, depth_limit=depth)
-    return factory(rules)
+    factory, _ = CONFIGURATIONS[configuration]
+    return factory(rules, depth_limit=depth)
 
 
 def measure_search(sender, scenario, configuration, depth):
     with sender:
         try:
             rules = GameRules()
-            state = create_scenario(scenario, rules)
+            state = create_scenario(scenario)
             agent = create_agent(configuration, rules, depth)
             legal_actions = rules.actions(state)
             sender.send(("ready", None))
@@ -185,7 +156,7 @@ def summarize(scenario, configuration, runs, samples, depth, timeout_ms):
         status="ok" if len(samples) == runs else "timeout",
         action=first.action if first else None,
         search_value=first.value if first else None,
-        depth_limit=depth if CONFIGURATIONS[configuration][1] else None,
+        depth_limit=depth,
         timeout_ms=timeout_ms,
     )
 
@@ -201,7 +172,7 @@ def compare_pair(plain, pruned, depth):
 
     # Check the pruned choice with a full window because a cutoff may return a bound.
     rules = GameRules()
-    state = create_scenario(plain.scenario, rules)
+    state = create_scenario(plain.scenario)
     agent = create_agent(plain.configuration, rules, depth)
     _, exact_value = agent.search(state, root_action=pruned.action)
     if not math.isclose(exact_value, plain.search_value, abs_tol=1e-12):
@@ -213,7 +184,10 @@ def print_table(rows):
     def number(value, precision="g"):
         return "" if value is None else format(value, precision)
 
-    table = [("Scenario", "Configuration", "Done/runs", "Median ms", "States", "Depth", "Status")]
+    table = [
+        ("Scenario", "Configuration", "Done/runs", "Median ms", "States",
+         "Depth", "Action", "Value", "Status")
+    ]
     for row in rows:
         table.append((
             row.scenario,
@@ -222,6 +196,8 @@ def print_table(rows):
             number(row.median_ms, ".3f"),
             number(row.median_states_visited),
             number(row.median_max_depth),
+            row.action or "",
+            number(row.search_value, ".6g"),
             row.status,
         ))
     widths = [max(map(len, column)) for column in zip(*table)]
@@ -242,7 +218,7 @@ def main():
     parser.add_argument("--runs", type=int, default=5, help="Repetitions per configuration")
     parser.add_argument(
         "--depth", type=int, default=DEFAULT_SEARCH_DEPTH,
-        help="Shared heuristic depth limit in ticks",
+        help="Shared search depth limit in ticks",
     )
     parser.add_argument("--timeout-ms", type=float, default=2000, help="Search deadline per run in ms")
     parser.add_argument("--csv", type=Path, default=Path(__file__).with_name("benchmark_results.csv"))
@@ -253,7 +229,7 @@ def main():
         parser.error("--timeout-ms must be finite and positive")
 
     print(TITLE)
-    print(f"Runs per configuration: {args.runs} | Heuristic depth: {args.depth} | "
+    print(f"Runs per configuration: {args.runs} | Search depth limit: {args.depth} | "
           f"Timeout per run: {args.timeout_ms:g} ms", flush=True)
     context = multiprocessing.get_context("spawn")
     rows = []

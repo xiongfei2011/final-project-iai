@@ -49,6 +49,10 @@ class GameState:
     expired_bullet_positions: tuple[Position, ...] = field(
         default=(), compare=False, repr=False
     )
+    # Match supplies this history when the current board has already occurred.
+    played_states: frozenset[GameStateKey] = field(
+        default_factory=frozenset, compare=False, repr=False
+    )
 
     def search_key(self) -> GameStateKey:
         """Take a hashable snapshot of the fields that affect play."""

@@ -7,7 +7,7 @@ from threading import Thread
 from .. import config
 from ..agents.search import Agent
 from .rules import GameRules
-from .state import GameState
+from .state import GameState, GameStateKey
 
 
 _AgentReply = tuple[object, str | None, list[str]]
@@ -27,6 +27,8 @@ class Match:
         self.message: str | None = None
         self._next_tick_at: int | None = None
         self._pending: dict[int, SimpleQueue[_AgentReply]] = {}
+        self._played_states: set[GameStateKey] = {state.search_key()}
+        self._board_repeated = False
         self._check_finished()
 
     def update(self, now_ms: int) -> None:
@@ -71,6 +73,10 @@ class Match:
     def _agent_state(self, player: int) -> GameState:
         snapshot = self.state.clone()
         snapshot.current_turn = player
+        snapshot.played_states = (
+            frozenset(key._replace(current_turn=player) for key in self._played_states)
+            if self._board_repeated else frozenset()
+        )
         return snapshot
 
     def _request_actions(self) -> None:
@@ -109,6 +115,9 @@ class Match:
 
     def _advance_tick(self, actions: dict[int, str]) -> dict[int, str]:
         self.state = self.rules.result_tick(self.state, actions)
+        key = self.state.search_key()
+        self._board_repeated = key in self._played_states
+        self._played_states.add(key)
         self.tick += 1
         self._check_finished()
         return actions

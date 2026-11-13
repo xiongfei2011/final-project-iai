@@ -119,10 +119,7 @@ class MatchSession:
     def _plan(self, state: GameState, specs: tuple[str, str], stop: Event) -> None:
         try:
             match = self._make_match(state, specs)
-            replay = record_match(
-                match, reuse_known_actions=all(spec in BUILT_IN_AGENTS for spec in specs),
-                stop_requested=stop.is_set,
-            )
+            replay = record_match(match, stop_requested=stop.is_set)
         except Exception as error:
             self._plan_result.put(error)
         else:
