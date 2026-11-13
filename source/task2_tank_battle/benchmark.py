@@ -203,11 +203,7 @@ def compare_pair(plain, pruned, depth):
     rules = GameRules()
     state = create_scenario(plain.scenario, rules)
     agent = create_agent(plain.configuration, rules, depth)
-    player = state.current_turn
-    replies = rules.actions(state, 1 - player)
-    exact_value = agent._action_value(
-        state, player, pruned.action, replies, -math.inf, math.inf, depth=0
-    )
+    _, exact_value = agent.search(state, root_action=pruned.action)
     if not math.isclose(exact_value, plain.search_value, abs_tol=1e-12):
         raise RuntimeError(f"{label}: {pruned.action} is not tied for the best value")
     return f"{label}: {plain.action} and {pruned.action} tie at {exact_value:g}"

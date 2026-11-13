@@ -2,11 +2,21 @@
 
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import NamedTuple
 
 from .. import config
 from .actions import Direction
 from .entities import Base, Bullet, Position, Tank, Wall
 from .map_loader import MapLayout, load_map
+
+
+class GameStateKey(NamedTuple):
+    dimensions: tuple[int, int]
+    current_turn: int
+    tanks: tuple[tuple[int, Position, Direction, int], ...]
+    bases: tuple[tuple[int, Position, int], ...]
+    walls: tuple[tuple[Position, int], ...]
+    bullets: tuple[tuple[Position, str, int], ...]
 
 
 @dataclass
@@ -39,6 +49,28 @@ class GameState:
     expired_bullet_positions: tuple[Position, ...] = field(
         default=(), compare=False, repr=False
     )
+
+    def search_key(self) -> GameStateKey:
+        """Take a hashable snapshot of the fields that affect play."""
+        return GameStateKey(
+            dimensions=(self.game_map.height, self.game_map.width),
+            current_turn=self.current_turn,
+            tanks=tuple(
+                (player, tank.position, tank.direction, tank.hp)
+                for player, tank in sorted(self.tanks.items())
+            ),
+            bases=tuple(
+                (player, base.position, base.hp)
+                for player, base in sorted(self.bases.items())
+            ),
+            walls=tuple(sorted(
+                (position, wall.hp) for position, wall in self.game_map.walls.items()
+            )),
+            bullets=tuple(sorted(
+                (bullet.position, bullet.direction.value, bullet.steps_left)
+                for bullet in self.bullets
+            )),
+        )
 
     def clone(self) -> "GameState":
         walls = {

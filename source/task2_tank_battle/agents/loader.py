@@ -22,28 +22,30 @@ from .search import (
 
 _AgentFactory = Callable[..., object]
 
-BUILT_IN_AGENTS = {
-    MINIMAX_AGENT: create_minimax_agent,
-    ALPHA_BETA_AGENT: create_alpha_beta_agent,
+HEURISTIC_AGENTS = {
     HEURISTIC_AGENT: create_heuristic_minimax_agent,
     HEURISTIC_ALPHA_BETA_AGENT: create_heuristic_minimax_alpha_beta_agent,
 }
 
+BUILT_IN_AGENTS = {
+    MINIMAX_AGENT: create_minimax_agent,
+    ALPHA_BETA_AGENT: create_alpha_beta_agent,
+    **HEURISTIC_AGENTS,
+}
+
 
 def load_agent(spec: str, rules: GameRules, depth_limit: int = DEFAULT_SEARCH_DEPTH) -> Agent:
-    """Load an agent by built-in name or by an external module:factory.
-
-    Built-in factories receive rules and depth_limit. External factories
-    receive rules and configure their own search depth.
-    """
-    factory, built_in = _resolve_factory(spec)
-    agent = _build_agent(factory, rules, depth_limit, built_in=built_in)
+    factory = _resolve_factory(spec)
+    if spec in HEURISTIC_AGENTS:
+        agent = factory(rules, depth_limit=depth_limit)
+    else:
+        agent = factory(rules)
     return _validate_agent(agent, spec)
 
 
-def _resolve_factory(spec: str) -> tuple[_AgentFactory, bool]:
+def _resolve_factory(spec: str) -> _AgentFactory:
     if spec in BUILT_IN_AGENTS:
-        return BUILT_IN_AGENTS[spec], True
+        return BUILT_IN_AGENTS[spec]
 
     module_name, separator, factory_name = spec.partition(":")
     if not separator or not module_name or not factory_name:
@@ -53,15 +55,7 @@ def _resolve_factory(spec: str) -> tuple[_AgentFactory, bool]:
     factory = getattr(module, factory_name, None)
     if not callable(factory):
         raise TypeError(f"Agent factory {spec!r} must be callable")
-    return factory, False
-
-
-def _build_agent(
-    factory: _AgentFactory, rules: GameRules, depth_limit: int, *, built_in: bool
-) -> object:
-    if built_in:
-        return factory(rules, depth_limit=depth_limit)
-    return factory(rules)
+    return factory
 
 
 def _validate_agent(agent: object, spec: str) -> Agent:

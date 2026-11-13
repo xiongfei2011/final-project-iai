@@ -69,8 +69,8 @@ direction and stays in its current cell.
 If both tanks try to enter the same cell, both stay put.
 
 The built-in agents test pairs of actions from the same board and use the
-opponent's strongest reply when scoring a choice. `--depth` counts complete
-ticks, with a default of three.
+opponent's strongest reply when scoring a choice. For the heuristic agents,
+`--depth` counts complete ticks, with a default of three.
 
 Opening HP, facing directions, the first player, game rules, search defaults, heuristic weights, and display settings are in `source/task2_tank_battle/config.py`. CLI options override the match defaults for one run.
 
@@ -98,11 +98,11 @@ Heuristic Minimax (`heuristic`), and Heuristic Minimax + Alpha-Beta
 (`heuristic-alpha-beta`). Partner agents passed with `--agent-a` or
 `--agent-b` also appear in the selectors.
 
-During gameplay, all four agents use `--depth` so search terminates even
-when `STAY` can repeat a board. At the depth limit, Minimax and Alpha-Beta
-give unfinished states a neutral score of 0. The heuristic agents estimate
-their value. A finished state always uses the game utility. The benchmark
-runs the two standard configurations without a depth limit.
+Minimax and Alpha-Beta search without a depth limit in the game and the
+benchmark. They use game utility at finished states and score a repeated
+state on the current search path as a draw. Alpha-Beta also prunes branches
+that cannot change the choice. The heuristic agents evaluate unfinished
+states at `--depth`. Full searches can take a long time on larger boards.
 
 #### Play on a text map
 
@@ -136,7 +136,7 @@ Place the agent module in `source/` or on `PYTHONPATH`. Each side accepts a
 built-in name or `module:factory`. A partner factory takes one argument,
 the shared `GameRules` instance, and returns an object with
 `choose_action(state)`. It sets its own search depth. The CLI option `--depth`
-applies to built-in agents. Each call to `choose_action` receives a copy of the
+applies to the built-in heuristic agents. Each call to `choose_action` receives a copy of the
 current `GameState` and returns an action from `rules.actions(state)`.
 On that copy, `state.current_turn` identifies which side the agent controls.
 

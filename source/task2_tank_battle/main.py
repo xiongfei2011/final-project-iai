@@ -51,7 +51,7 @@ def main() -> None:
         "--depth",
         type=int,
         default=config.DEFAULT_SEARCH_DEPTH,
-        help="Search depth in ticks for built-in agents",
+        help="Search depth in ticks for the built-in heuristic agents",
     )
     parser.add_argument(
         "--turn-ms",
