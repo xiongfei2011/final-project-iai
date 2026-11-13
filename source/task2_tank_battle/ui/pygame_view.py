@@ -1,9 +1,11 @@
-"""High-tech tactical Pygame view for Tank Battle.
+"""Pixel-art retro arcade Pygame view for Tank Battle.
 
-Completely redesigned using mathematical and geometric routines from
-pygame.math (Vector2, clamp, lerp) along with procedural trigonometry,
-directional lighting, smooth motion interpolation,
-particle systems, and camera shake.
+Features:
+- Left-side retro arcade control panel with 3D beveled pixel buttons & cards
+- Full pixel-art aesthetics for tanks, bases, brick walls, and projectiles
+- Per-entity segmented pixel health bars directly on the battlefield
+- Damage hit-flash effects (white/red flashing) and floating '-1' combat numbers
+- Smooth quintic smootherstep motion interpolation for 60 FPS gameplay
 """
 
 import math
@@ -15,38 +17,41 @@ from .. import config
 from ..game.actions import Direction
 from ..game.entities import Position
 from ..game.state import GameState
-from .control_panel import ControlPanel, PanelState
+from .control_panel import ControlPanel, PanelState, draw_pixel_box
 from .effects import ParticleManager, ScreenShake
 from .geometry import (
-    calculate_bevel_lighting,
-    create_chamfered_box,
-    create_cracks,
-    create_regular_polygon,
     lerp_angle,
     lerp_color,
     smootherstep,
-    smoothstep,
 )
 
-# Refined tactical cyber palette
-CYBER_BG = (12, 16, 24)
-CYBER_BOARD_BG = (16, 22, 32)
-CYBER_CELL_A = (22, 30, 42)
-CYBER_CELL_B = (27, 36, 50)
-CYBER_GRID_LINE = (36, 48, 66)
-CYBER_BORDER = (45, 60, 82)
-CYBER_ACCENT_A = (34, 211, 238)   # Cyan neon for Player A
-CYBER_ACCENT_B = (251, 146, 60)   # Orange neon for Player B
-CYBER_PANEL = (20, 26, 38)
-CYBER_PANEL_BORDER = (42, 54, 76)
-CYBER_TEXT_MAIN = (241, 245, 249)
-CYBER_WALL_BASE = (100, 112, 128)
-CYBER_BULLET_CORE = (254, 240, 138)
-CYBER_BULLET_GLOW = (245, 158, 11)
+# Pixel Art Retro Arcade Palette
+RETRO_BG = (14, 16, 24)
+RETRO_BOARD_BORDER = (10, 12, 18)
+RETRO_BOARD_BG = (18, 22, 32)
+RETRO_CELL_A = (28, 34, 48)
+RETRO_CELL_B = (34, 40, 56)
+RETRO_GRID_LINE = (20, 24, 34)
+
+RETRO_PLAYER_A = (34, 180, 240)   # Cyan 8-bit
+RETRO_PLAYER_B = (248, 128, 40)   # Orange 8-bit
+RETRO_HIGHLIGHT_A = (130, 225, 255)
+RETRO_SHADOW_A = (14, 85, 140)
+RETRO_HIGHLIGHT_B = (255, 185, 90)
+RETRO_SHADOW_B = (140, 50, 15)
+
+RETRO_WALL_BRICK = (175, 75, 45)
+RETRO_WALL_LIGHT = (215, 115, 75)
+RETRO_WALL_DARK = (105, 35, 20)
+RETRO_WALL_MORTAR = (30, 32, 40)
+
+RETRO_HP_GREEN = (52, 211, 110)
+RETRO_HP_YELLOW = (250, 204, 21)
+RETRO_HP_RED = (248, 113, 113)
 
 
 class PygameView:
-    """Renders the battlefield, cyber armor units, and combat dynamics."""
+    """Renders the battlefield, pixel-art armor units, per-entity HP, and combat dynamics."""
 
     def __init__(self, state: GameState) -> None:
         self.rows = state.game_map.height
@@ -55,7 +60,7 @@ class PygameView:
         panel_width = config.UI_CONTROL_PANEL_WIDTH
         desktop_width = pygame.display.get_desktop_sizes()[0][0]
 
-        # Dynamically scale cell size while keeping tactical proportion
+        # Dynamically scale cell size
         self.cell_size = max(
             config.UI_MIN_CELL_SIZE,
             min(
@@ -73,40 +78,50 @@ class PygameView:
             config.UI_MIN_WINDOW_WIDTH,
             board_width + panel_width + 3 * padding,
         )
-        window_height = max(board_height + 96, config.UI_CONTROL_PANEL_HEIGHT + 2 * padding)
-        panel_x = window_width - padding - panel_width
-        self.board_x = (panel_x - board_width) // 2
-        self.board_y = (window_height + 46 - board_height) // 2
+        window_height = max(board_height + 48, config.UI_CONTROL_PANEL_HEIGHT + 2 * padding)
 
         self.screen = pygame.display.set_mode((window_width, window_height))
-        pygame.display.set_caption(f"{config.WINDOW_TITLE} - Tactical Cyber Armor")
+        pygame.display.set_caption(f"{config.WINDOW_TITLE} - 8-Bit Retro Pixel Combat")
+
+        # LEFT SIDE MENU PANEL LAYOUT
+        panel_x = padding
         panel_rect = pygame.Rect(panel_x, padding, panel_width, window_height - 2 * padding)
         self.controls = ControlPanel(self.screen, panel_rect)
 
+        # RIGHT SIDE BOARD LAYOUT
+        board_area_x = panel_x + panel_width + padding
+        board_area_w = window_width - board_area_x - padding
+        self.board_x = board_area_x + max(0, (board_area_w - board_width) // 2)
+        self.board_y = max(padding, (window_height - board_height) // 2)
+
         # Fonts
         self.title_font = pygame.font.Font(None, config.UI_TITLE_FONT_SIZE + 2)
-        self.small_font = pygame.font.Font(None, max(14, min(20, self.cell_size // 4)))
-        self.tiny_font = pygame.font.Font(None, 14)
-        self.light_dir = Vector2(-1.0, -1.0).normalize()
+        self.font = pygame.font.Font(None, config.UI_FONT_SIZE)
+        self.small_font = pygame.font.Font(None, max(14, min(18, self.cell_size // 4)))
+        self.tiny_font = pygame.font.Font(None, 13)
+
         self.turn_ms = config.DEFAULT_TURN_MS
         self._last_step = 0
+
+        # Damage hit-flash timers (records timestamp of last hit)
+        self.tank_hit_flash: dict[int, int] = {0: 0, 1: 0}
+        self.base_hit_flash: dict[int, int] = {0: 0, 1: 0}
+        self.wall_hit_flash: dict[Position, int] = {}
+
         self._reset_dynamics(state)
 
     def _reset_dynamics(self, state: GameState) -> None:
-        """Clear effects and snap pieces to the selected board when rewinding."""
-        # Simulation & FX engines
+        """Clear visual effects and snap entities to current board."""
         self.particle_mgr = ParticleManager()
         self.screen_shake = ScreenShake(max_offset=0.0)
 
-        # Vector dynamics state
         now_ms = pygame.time.get_ticks()
         self.last_update_ms = now_ms
-
-        # Timing and synchronized tick engine
         self.last_tick_time = now_ms
+        self._shown_state: GameState | None = None
         self.last_state_signature: tuple | None = None
 
-        # Smooth position and angle interpolators for tanks
+        # Tank smooth motion interpolation
         self.tank_prev_grid_pos: dict[int, Position] = {
             p: t.position for p, t in state.tanks.items()
         }
@@ -140,33 +155,27 @@ class PygameView:
             self.tank_visual_angle[player] = init_ang
             self.tank_target_angle[player] = init_ang
 
-        # Damage & explosion detection memory
         self.prev_tank_hp = {p: t.hp for p, t in state.tanks.items()}
         self.prev_base_hp = {p: b.hp for p, b in state.bases.items()}
         self.prev_wall_hp = {
             pos: w.hp for pos, w in state.game_map.walls.items() if not w.is_destroyed
         }
-        self.prev_bullet_positions: set[Position] = set()
 
     def set_turn_ms(self, turn_ms: int) -> None:
-        """Configure turn period for precise temporal interpolation."""
         if turn_ms > 0:
             self.turn_ms = turn_ms
 
     def _direction_to_angle(self, direction: Direction) -> float:
-        """Convert directional delta (row, col) to degrees using math.atan2."""
         dr, dc = direction.delta
         return math.degrees(math.atan2(dr, dc))
 
     def _tile_center_vec(self, position: Position) -> Vector2:
-        """Return the exact center of a grid tile as a Vector2."""
         row, col = position
         cx = self.board_x + (col - 0.5) * self.cell_size
         cy = self.board_y + (row - 0.5) * self.cell_size
         return Vector2(cx, cy)
 
     def _tile(self, position: Position) -> pygame.Rect:
-        """Backward compatibility for rect tile bounding box."""
         row, col = position
         return pygame.Rect(
             self.board_x + (col - 1) * self.cell_size,
@@ -174,10 +183,6 @@ class PygameView:
             self.cell_size,
             self.cell_size,
         )
-
-    def _piece_rect(self, position: Position) -> pygame.Rect:
-        inset = max(2, self.cell_size // 5)
-        return self._tile(position).inflate(-inset, -inset)
 
     def draw(
         self,
@@ -188,7 +193,7 @@ class PygameView:
         turn_label: str | None = None,
         panel: PanelState | None = None,
     ) -> None:
-        """Render the complete game frame at 60 FPS."""
+        """Render frame with pixel graphics, per-entity HP bars, and damage flashes."""
         if panel is None:
             panel = PanelState(message=message or (turn_label if show_turn else None) or "")
         if panel.step < self._last_step:
@@ -199,53 +204,49 @@ class PygameView:
         dt = clamp((now_ms - self.last_update_ms) / 1000.0, 0.001, 0.08)
         self.last_update_ms = now_ms
 
-        # 1. Update physics, animations, and detect combat impacts
+        # 1. Update dynamics & damage events
         self._update_dynamics(state, dt, now_ms)
 
-        # 2. Render background and ambient grid
-        self.screen.fill(CYBER_BG)
-        self._draw_ambient_decorations(now_ms)
+        # 2. Clear Screen with dark retro backdrop
+        self.screen.fill(RETRO_BG)
 
-        title = self.title_font.render(config.WINDOW_TITLE.upper(), True, CYBER_TEXT_MAIN)
-        self.screen.blit(title, (config.UI_PADDING, 20))
-
-        # 4. Draw Board with stable positioning (no screen shake)
-        shake_offset = Vector2(0.0, 0.0)
-        self._draw_board(shake_offset)
-
-        # 5. Draw Tactical Entities (Walls, Bases, Tanks, Bullets)
-        self._draw_walls(state, shake_offset)
-        self._draw_bases(state, shake_offset, now_ms)
-        self._draw_tanks(state, shake_offset, dt)
-        self._draw_bullets(state, shake_offset, now_ms)
-
-        # 6. Draw dynamic particle systems & shockwaves on top of the board
-        self.particle_mgr.draw(self.screen)
-
+        # 3. Draw Left-Side Pixel Control Panel
         self.controls.draw(state, panel)
+
+        # 4. Draw Right-Side Pixel Battlefield
+        offset = Vector2(0.0, 0.0)
+        self._draw_pixel_board(offset)
+        self._draw_pixel_walls(state, offset, now_ms)
+        self._draw_pixel_bases(state, offset, now_ms)
+        self._draw_pixel_tanks(state, offset, dt, now_ms)
+        self._draw_pixel_bullets(state, offset, now_ms)
+
+        # 5. Draw Particles & Floating Damage Numbers on top
+        self.particle_mgr.draw(self.screen)
 
         pygame.display.flip()
 
     def _update_dynamics(self, state: GameState, dt: float, now_ms: int) -> None:
-        """Update particle physics and interpolate positions."""
+        """Update physics, floating text arcs, and detect damage hits for flashing."""
         self.particle_mgr.update(dt)
 
-        # Detect tick advance to synchronize animation clocks
         state_sig = (
             state.current_turn,
             tuple(t.position for t in state.tanks.values()),
             tuple(t.direction for t in state.tanks.values()),
             tuple(b.position for b in state.bullets),
         )
-        if state_sig != self.last_state_signature:
+        new_frame = state is not self._shown_state
+        if new_frame or state_sig != self.last_state_signature:
             if self.last_state_signature is not None:
                 interval = now_ms - self.last_tick_time
                 if 80 <= interval <= 2500:
                     self.turn_ms = interval
             self.last_tick_time = now_ms
             self.last_state_signature = state_sig
+            self._shown_state = state
 
-        # A. Detect Tank Movements & Rotations with Smootherstep
+        # A. Detect Tank Movements & Rotations
         for player, tank in state.tanks.items():
             prev_cell = self.tank_prev_grid_pos.get(player, tank.position)
             if tank.position != prev_cell:
@@ -260,9 +261,9 @@ class PygameView:
                 self.tank_rot_to[player] = target_ang
                 self.tank_rot_start[player] = now_ms
 
-            # Quintic smootherstep translation (continuous 1st & 2nd derivatives)
+            # Quintic smootherstep translation across full step duration (no end-of-tick freeze)
             elapsed_move = now_ms - self.tank_move_start.get(player, 0)
-            move_duration = max(70.0, self.turn_ms * 0.78)
+            move_duration = max(60.0, float(self.turn_ms))
             move_t = clamp(elapsed_move / move_duration, 0.0, 1.0)
             smooth_move_t = smootherstep(move_t)
             self.tank_visual_pos[player] = self.tank_move_from[player].lerp(
@@ -271,417 +272,465 @@ class PygameView:
             self.tank_is_moving[player] = (move_t < 1.0)
             self.tank_move_progress[player] = smooth_move_t
 
-            # Shortest-arc smooth rotation
+            # Angular rotation
             elapsed_rot = now_ms - self.tank_rot_start.get(player, 0)
-            rot_duration = max(50.0, self.turn_ms * 0.45)
+            rot_duration = max(40.0, self.turn_ms * 0.55)
             rot_t = clamp(elapsed_rot / rot_duration, 0.0, 1.0)
             smooth_rot_t = smootherstep(rot_t)
             self.tank_visual_angle[player] = lerp_angle(
                 self.tank_rot_from[player], self.tank_rot_to[player], smooth_rot_t
             )
 
-            # Decay recoil
+            # Recoil recovery
             self.tank_recoil[player] = clamp(
                 self.tank_recoil[player] - dt * 5.0, 0.0, 1.0
             )
 
-        # B. Detect Damage & Explosions
-        # Wall damage
+        # B. Detect Damage Hits -> Trigger Hit Flash & Floating Damage Numbers
+        # 1. Walls
         for pos, wall in state.game_map.walls.items():
             old_hp = self.prev_wall_hp.get(pos, wall.hp)
             if wall.hp < old_hp:
+                dmg = old_hp - wall.hp
                 center = self._tile_center_vec(pos)
-                self.particle_mgr.spawn_wall_debris(center, count=16)
+                self.wall_hit_flash[pos] = now_ms
+                self.particle_mgr.spawn_floating_damage(center, text=f"-{dmg}", color=RETRO_HP_YELLOW)
+                self.particle_mgr.spawn_wall_debris(center, count=14)
             self.prev_wall_hp[pos] = wall.hp
 
-        # Base damage
+        # 2. Bases
         for player, base in state.bases.items():
             old_hp = self.prev_base_hp.get(player, base.hp)
             if base.hp < old_hp:
+                dmg = old_hp - base.hp
                 center = self._tile_center_vec(base.position)
-                color = CYBER_ACCENT_A if player == 0 else CYBER_ACCENT_B
-                self.particle_mgr.spawn_explosion(center, primary_color=color, count=30)
+                self.base_hit_flash[player] = now_ms
+                self.particle_mgr.spawn_floating_damage(center, text=f"-{dmg}", color=RETRO_HP_RED)
+                color = RETRO_PLAYER_A if player == 0 else RETRO_PLAYER_B
+                self.particle_mgr.spawn_explosion(center, primary_color=color, count=24)
             self.prev_base_hp[player] = base.hp
 
-        # Tank damage
+        # 3. Tanks
         for player, tank in state.tanks.items():
             old_hp = self.prev_tank_hp.get(player, tank.hp)
             if tank.hp < old_hp:
+                dmg = old_hp - tank.hp
                 center = self._tile_center_vec(tank.position)
-                color = CYBER_ACCENT_A if player == 0 else CYBER_ACCENT_B
-                self.particle_mgr.spawn_explosion(center, primary_color=color, count=24)
+                self.tank_hit_flash[player] = now_ms
+                self.particle_mgr.spawn_floating_damage(center, text=f"-{dmg}", color=RETRO_HP_RED)
+                color = RETRO_PLAYER_A if player == 0 else RETRO_PLAYER_B
+                self.particle_mgr.spawn_explosion(center, primary_color=color, count=20)
             self.prev_tank_hp[player] = tank.hp
 
-        # Bullet impacts & expiration explosions
-        current_bullet_positions = {b.position for b in state.bullets}
-        for pos in state.expired_bullet_positions:
-            center = self._tile_center_vec(pos)
-            self.particle_mgr.spawn_explosion(
-                center, primary_color=CYBER_BULLET_GLOW, count=18
-            )
+        # Muzzle flashes
+        if new_frame:
+            for flight in state.bullet_flights:
+                tank = state.tanks.get(flight.owner)
+                if tank is not None and flight.start == tank.position:
+                    center = self._tile_center_vec(flight.start)
+                    angle = self._direction_to_angle(tank.direction)
+                    self.particle_mgr.spawn_muzzle_flash(center, angle, count=10)
+                    self.tank_recoil[flight.owner] = 1.0
 
-        # Detect muzzle flash for newly fired bullets
-        for bullet in state.bullets:
-            if bullet.position not in self.prev_bullet_positions and bullet.steps_left >= config.BULLET_MAX_RANGE:
-                # Spawn muzzle flash from the firing tank
-                center = self._tile_center_vec(bullet.position)
-                bullet_ang = self._direction_to_angle(bullet.direction)
-                self.particle_mgr.spawn_muzzle_flash(center, bullet_ang, count=12)
-                # Apply recoil to the firing tank
-                for p, t in state.tanks.items():
-                    if t.position.moved(t.direction) == bullet.position:
-                        self.tank_recoil[p] = 1.0
-
-        self.prev_bullet_positions = current_bullet_positions
-
-    def _draw_ambient_decorations(self, now_ms: int) -> None:
-        """Render high-tech background lines and corner tactical rivets."""
-        w, h = self.screen.get_size()
-        # Subtle horizontal circuit lines
-        alpha_surf = pygame.Surface((w, h), pygame.SRCALPHA)
-        pulse = 0.5 + 0.5 * math.sin(now_ms * 0.002)
-        grid_alpha = int(clamp(lerp(18.0, 32.0, pulse), 0.0, 255.0))
-        for y in range(0, h, 28):
-            pygame.draw.line(alpha_surf, (50, 70, 95, grid_alpha), (0, y), (w, y), 1)
-        self.screen.blit(alpha_surf, (0, 0))
-
-    def _draw_board(self, offset: Vector2) -> None:
-        """Draw the tactical board grid, beveled border, and coordinate crosshairs."""
+    def _draw_pixel_board(self, offset: Vector2) -> None:
+        """Render retro arcade checkered battlefield with double pixel border."""
         board_w = self.columns * self.cell_size
         board_h = self.rows * self.cell_size
-        center = Vector2(
-            self.board_x + board_w * 0.5 + offset.x,
-            self.board_y + board_h * 0.5 + offset.y,
+        bx = int(self.board_x + offset.x)
+        by = int(self.board_y + offset.y)
+
+        # Outer double pixel frame
+        outer_rect = pygame.Rect(bx - 6, by - 6, board_w + 12, board_h + 12)
+        draw_pixel_box(
+            self.screen,
+            outer_rect,
+            fill_color=RETRO_BOARD_BG,
+            border_color=RETRO_BOARD_BORDER,
+            highlight_color=(60, 72, 98),
+            shadow_color=(12, 14, 20),
+            border_width=2,
         )
 
-        # 1. Beveled Board Outer Frame
-        outer_poly = create_chamfered_box(
-            center, board_w + 14, board_h + 14, chamfer=8.0
-        )
-        pygame.draw.polygon(self.screen, CYBER_PANEL_BORDER, [p for p in outer_poly])
-        inner_frame = create_chamfered_box(
-            center, board_w + 10, board_h + 10, chamfer=6.0
-        )
-        pygame.draw.polygon(self.screen, CYBER_BOARD_BG, [p for p in inner_frame])
-
-        # 2. Draw Grid Tiles
+        # Checkered Pixel Cells
         for row in range(1, self.rows + 1):
             for col in range(1, self.columns + 1):
-                pos = Position(row, col)
-                rect = self._tile(pos)
+                rect = self._tile(Position(row, col))
                 rect.x += int(offset.x)
                 rect.y += int(offset.y)
 
-                tile_color = CYBER_CELL_A if (row + col) % 2 == 0 else CYBER_CELL_B
+                tile_color = RETRO_CELL_A if (row + col) % 2 == 0 else RETRO_CELL_B
                 pygame.draw.rect(self.screen, tile_color, rect)
-                pygame.draw.rect(self.screen, CYBER_GRID_LINE, rect, width=1)
+                pygame.draw.rect(self.screen, RETRO_GRID_LINE, rect, width=1)
 
-                # Tactical crosshair corner markers at grid intersections
-                tl = Vector2(rect.topleft)
-                crosshair_len = 3.0
-                pygame.draw.line(self.screen, CYBER_BORDER, tl - Vector2(crosshair_len, 0), tl + Vector2(crosshair_len, 0))
-                pygame.draw.line(self.screen, CYBER_BORDER, tl - Vector2(0, crosshair_len), tl + Vector2(0, crosshair_len))
+                # Pixel corner dots
+                pygame.draw.rect(self.screen, (22, 26, 36), (rect.left, rect.top, 2, 2))
 
-        # 3. Outer Neon Accent Border
-        pygame.draw.lines(self.screen, CYBER_BORDER, True, [p for p in inner_frame], width=1)
-
-    def _draw_walls(self, state: GameState, offset: Vector2) -> None:
-        """Render fortified defense barriers with 3D bevel lighting and cracks."""
+    def _draw_pixel_walls(self, state: GameState, offset: Vector2, now_ms: int) -> None:
+        """Render Battle-City style pixel brick barriers with damage flash and mini HP bars."""
         for pos, wall in state.game_map.walls.items():
             if wall.is_destroyed:
                 continue
 
-            center = self._tile_center_vec(pos) + offset
-            box_size = self.cell_size * 0.76
-            chamfer = box_size * 0.16
+            rect = self._tile(pos)
+            rect.x += int(offset.x)
+            rect.y += int(offset.y)
 
-            # Generate 8-sided chamfered box
-            outer_verts = create_chamfered_box(center, box_size, box_size, chamfer)
+            # Inset wall block
+            inset = max(2, self.cell_size // 10)
+            wall_rect = rect.inflate(-inset * 2, -inset * 2)
 
-            # Draw 3D beveled facets using surface normals & vector dot product
-            for i in range(len(outer_verts)):
-                p1 = outer_verts[i]
-                p2 = outer_verts[(i + 1) % len(outer_verts)]
-                edge = p2 - p1
-                normal = edge.rotate(-90.0)
+            # Check Damage Hit Flash (Chớp trắng khi nhận sát thương)
+            is_flashing = (now_ms - self.wall_hit_flash.get(pos, 0)) < 130
 
-                facet_color = calculate_bevel_lighting(
-                    normal, self.light_dir, CYBER_WALL_BASE, intensity=0.4
-                )
-                facet_poly = [center, p1, p2]
-                pygame.draw.polygon(self.screen, facet_color, facet_poly)
+            if is_flashing:
+                # White-hot hit flash
+                pygame.draw.rect(self.screen, (255, 255, 255), wall_rect)
+                pygame.draw.rect(self.screen, (200, 50, 50), wall_rect, width=2)
+            else:
+                # Pixel Brick Texture
+                self._render_brick_texture(wall_rect, wall.hp)
 
-            # Draw central armor plate
-            inner_verts = create_chamfered_box(
-                center, box_size * 0.70, box_size * 0.70, chamfer * 0.6
-            )
-            pygame.draw.polygon(self.screen, (75, 85, 100), inner_verts)
-            pygame.draw.polygon(self.screen, CYBER_PANEL_BORDER, inner_verts, width=1)
+            # Per-Entity Health Bar for Wall (3 pixel segments at bottom of wall)
+            self._draw_wall_hp_bar(wall_rect, wall.hp)
 
-            # Corner Rivets using symmetric vectors
-            rivet_dist = box_size * 0.24
-            for rx in (-1, 1):
-                for ry in (-1, 1):
-                    r_pos = center + Vector2(rx * rivet_dist, ry * rivet_dist)
-                    pygame.draw.circle(self.screen, (130, 145, 165), (int(r_pos.x), int(r_pos.y)), 1)
+    def _render_brick_texture(self, rect: pygame.Rect, hp: int) -> None:
+        """Procedurally render classic 8-bit brick patterns with mortar lines."""
+        # Dark Mortar Background
+        pygame.draw.rect(self.screen, RETRO_WALL_MORTAR, rect)
+        pygame.draw.rect(self.screen, RETRO_BOARD_BORDER, rect, width=1)
 
-            # Procedural Fracture Cracks based on wall damage
-            if wall.hp < config.WALL_INITIAL_HP:
-                branches = 5 - wall.hp
-                cracks = create_cracks(
-                    center, box_size * 0.38, seed=pos.row * 17 + pos.column * 31, num_branches=branches
-                )
-                for crack in cracks:
-                    pts = [(int(p.x), int(p.y)) for p in crack]
-                    pygame.draw.lines(self.screen, (25, 30, 38), False, pts, 1)
+        # 3 Rows of bricks
+        rows = 3
+        brick_h = (rect.height - 4) // rows
+        for r in range(rows):
+            by = rect.y + 1 + r * (brick_h + 1)
+            # Offset every second row like classic masonry
+            cols = 2
+            brick_w = (rect.width - 4) // cols
+            shift = (brick_w // 2) if r % 2 == 1 else 0
 
-            # HP Indicator
-            hp_txt = self.tiny_font.render(str(wall.hp), True, CYBER_TEXT_MAIN)
-            self.screen.blit(hp_txt, hp_txt.get_rect(center=(int(center.x), int(center.y))))
+            for c in range(-1, cols + 1):
+                bx = rect.x + 1 + c * (brick_w + 1) + shift
+                b_rect = pygame.Rect(bx, by, brick_w, brick_h)
+                clip_rect = b_rect.clip(rect.inflate(-2, -2))
+                if clip_rect.width <= 0 or clip_rect.height <= 0:
+                    continue
 
-    def _draw_bases(self, state: GameState, offset: Vector2, now_ms: int) -> None:
-        """Render high-tech octagonal command outposts with rotating radar sweep."""
+                # Damage chipped corners based on HP
+                if hp == 2 and r == 0 and c == 0:
+                    continue  # chipped brick
+                if hp == 1 and (r == 0 or (r == 2 and c == 1)):
+                    continue  # broken bricks
+
+                pygame.draw.rect(self.screen, RETRO_WALL_BRICK, clip_rect)
+                # 1px top highlight
+                pygame.draw.line(self.screen, RETRO_WALL_LIGHT, clip_rect.topleft, clip_rect.topright, 1)
+                # 1px bottom shadow
+                pygame.draw.line(self.screen, RETRO_WALL_DARK, clip_rect.bottomleft, clip_rect.bottomright, 1)
+
+    def _draw_wall_hp_bar(self, wall_rect: pygame.Rect, hp: int) -> None:
+        """Render 3 mini pixel blocks indicating wall integrity (3/3 HP)."""
+        bar_w = 18
+        bar_h = 4
+        bar_x = wall_rect.centerx - bar_w // 2
+        bar_y = wall_rect.bottom - bar_h - 2
+
+        # Black slot backing
+        pygame.draw.rect(self.screen, (10, 12, 16), (bar_x - 1, bar_y - 1, bar_w + 2, bar_h + 2))
+
+        seg_w = 5
+        gap = 1
+        for i in range(3):
+            sx = bar_x + i * (seg_w + gap)
+            seg_rect = pygame.Rect(sx, bar_y, seg_w, bar_h)
+            if i < hp:
+                col = RETRO_HP_GREEN if hp == 3 else (RETRO_HP_YELLOW if hp == 2 else RETRO_HP_RED)
+                pygame.draw.rect(self.screen, col, seg_rect)
+            else:
+                pygame.draw.rect(self.screen, (30, 34, 44), seg_rect)
+
+    def _draw_pixel_bases(self, state: GameState, offset: Vector2, now_ms: int) -> None:
+        """Render fortified pixel command bases with animated radar antenna and HP bars."""
         for player, base in state.bases.items():
             center = self._tile_center_vec(base.position) + offset
-            radius = self.cell_size * 0.40
-            player_color = CYBER_ACCENT_A if player == 0 else CYBER_ACCENT_B
+            player_color = RETRO_PLAYER_A if player == 0 else RETRO_PLAYER_B
             is_active = not base.is_destroyed
-            base_col = player_color if is_active else config.UI_DESTROYED_COLOR
+            is_flashing = (now_ms - self.base_hit_flash.get(player, 0)) < 130
 
-            # 1. Outer Octagonal Fortification (8 vertices using polar coordinates)
-            octagon = create_regular_polygon(center, radius, sides=8, start_angle=22.5)
+            size = int(self.cell_size * 0.82)
+            base_rect = pygame.Rect(int(center.x - size // 2), int(center.y - size // 2), size, size)
 
-            # Beveled facets with directional lighting
-            for i in range(8):
-                p1 = octagon[i]
-                p2 = octagon[(i + 1) % 8]
-                normal = (p2 - p1).rotate(-90.0)
-                facet_col = calculate_bevel_lighting(normal, self.light_dir, base_col, intensity=0.35)
-                pygame.draw.polygon(self.screen, facet_col, [center, p1, p2])
-
-            # 2. Inner Command Core
-            inner_octagon = create_regular_polygon(center, radius * 0.72, sides=8, start_angle=22.5)
-            pygame.draw.polygon(self.screen, CYBER_PANEL, inner_octagon)
-            pygame.draw.polygon(self.screen, base_col, inner_octagon, width=2)
-
-            if is_active:
-                # 3. Rotating Radar Sweep Beam (Trigonometric angular sector)
-                sweep_angle = (now_ms * 0.14) % 360.0
-                radar_surf = pygame.Surface(self.screen.get_size(), pygame.SRCALPHA)
-                sector_steps = 7
-                for s in range(sector_steps):
-                    ang = sweep_angle - s * 3.5
-                    alpha = int(clamp(lerp(160.0, 10.0, s / sector_steps), 0.0, 255.0))
-                    ray_end = center + Vector2.from_polar((radius * 0.7, ang))
-                    pygame.draw.line(
-                        radar_surf,
-                        (*base_col, alpha),
-                        (int(center.x), int(center.y)),
-                        (int(ray_end.x), int(ray_end.y)),
-                        2,
-                    )
-                self.screen.blit(radar_surf, (0, 0))
-
-                # Expanding Shield Ripple Wave
-                shield_surf = pygame.Surface(self.screen.get_size(), pygame.SRCALPHA)
-                wave_t = (now_ms * 0.0012 + player * 0.5) % 1.0
-                wave_r = int(lerp(radius * 0.35, radius * 1.35, wave_t))
-                wave_alpha = int(clamp(lerp(140.0, 0.0, wave_t), 0.0, 255.0))
-                pygame.draw.circle(shield_surf, (*base_col, wave_alpha), (int(center.x), int(center.y)), wave_r, 1)
-                self.screen.blit(shield_surf, (0, 0))
-
-                # 4. Pulsing Reactor Core
-                pulse = 0.5 + 0.5 * math.sin(now_ms * 0.007 + player * math.pi)
-                core_r = max(2.0, radius * 0.22 * (0.8 + 0.3 * pulse))
-                pygame.draw.circle(self.screen, base_col, (int(center.x), int(center.y)), int(core_r))
-                pygame.draw.circle(self.screen, (255, 255, 255), (int(center.x), int(center.y)), max(1, int(core_r * 0.4)))
+            if is_flashing:
+                # White hit flash on damage
+                pygame.draw.rect(self.screen, (255, 255, 255), base_rect)
+                pygame.draw.rect(self.screen, (220, 50, 50), base_rect, width=2)
+            elif not is_active:
+                # Destroyed rubble
+                draw_pixel_box(self.screen, base_rect, fill_color=(45, 48, 56), border_color=RETRO_BOARD_BORDER, border_width=2)
+                # Red X over ruins
+                pygame.draw.line(self.screen, (200, 50, 50), base_rect.topleft, base_rect.bottomright, 2)
+                pygame.draw.line(self.screen, (200, 50, 50), base_rect.topright, base_rect.bottomleft, 2)
             else:
-                # Destroyed marker
-                pygame.draw.line(self.screen, (220, 50, 50), center - Vector2(6, 6), center + Vector2(6, 6), 2)
-                pygame.draw.line(self.screen, (220, 50, 50), center - Vector2(6, -6), center + Vector2(6, -6), 2)
+                # Active Pixel Command Outpost
+                draw_pixel_box(
+                    self.screen,
+                    base_rect,
+                    fill_color=(24, 28, 40),
+                    border_color=RETRO_BOARD_BORDER,
+                    highlight_color=(70, 85, 115),
+                    shadow_color=(12, 14, 20),
+                    border_width=2,
+                )
 
-            # Base Label & HP
-            label_text = f"B:{base.hp}"
-            lbl = self.tiny_font.render(label_text, True, CYBER_TEXT_MAIN)
-            lbl_bg = lbl.get_rect(center=(int(center.x), int(center.y + radius * 0.75)))
-            pygame.draw.rect(self.screen, CYBER_BG, lbl_bg.inflate(4, 2), border_radius=3)
-            self.screen.blit(lbl, lbl_bg)
+                # Inner fortified shield
+                inner_s = size - 8
+                inner_rect = pygame.Rect(int(center.x - inner_s // 2), int(center.y - inner_s // 2), inner_s, inner_s)
+                pygame.draw.rect(self.screen, player_color, inner_rect, width=2)
 
-    def _draw_tanks(self, state: GameState, offset: Vector2, dt: float) -> None:
-        """Render tactical tanks with smooth position lerp, rotating turret, tracks, and recoil."""
+                # Gold Command Star / Emblem
+                star_s = max(4, size // 4)
+                star_rect = pygame.Rect(int(center.x - star_s // 2), int(center.y - star_s // 2), star_s, star_s)
+                pygame.draw.rect(self.screen, (255, 215, 0), star_rect)
+                pygame.draw.rect(self.screen, (255, 255, 255), star_rect.inflate(-2, -2))
+
+                # Animated Blinking 8-bit Antenna Light
+                blink = (now_ms // 250) % 2 == 0
+                ant_col = (255, 255, 255) if blink else player_color
+                pygame.draw.line(self.screen, player_color, (center.x, base_rect.top), (center.x, base_rect.top - 4), 2)
+                pygame.draw.rect(self.screen, ant_col, (center.x - 2, base_rect.top - 6, 4, 3))
+
+            # Per-Entity Health Bar for Base
+            bar_y = base_rect.top - 7 if player == 0 else base_rect.bottom + 2
+            self._draw_entity_hp_bar(
+                center_x=int(center.x),
+                y=bar_y,
+                hp=base.hp,
+                max_hp=config.BASE_INITIAL_HP,
+                width=int(size * 0.9),
+                label="BASE",
+                player_color=player_color,
+            )
+
+    def _draw_pixel_tanks(self, state: GameState, offset: Vector2, dt: float, now_ms: int) -> None:
+        """Render 8-bit / Metal Slug inspired pixel battle tanks with per-tank health bars."""
         for player, tank in state.tanks.items():
             center = self.tank_visual_pos[player] + offset
             angle = self.tank_visual_angle[player]
             is_active = not tank.is_destroyed
-            player_color = CYBER_ACCENT_A if player == 0 else CYBER_ACCENT_B
-            color = player_color if is_active else config.UI_DESTROYED_COLOR
+            player_color = RETRO_PLAYER_A if player == 0 else RETRO_PLAYER_B
+            hi_color = RETRO_HIGHLIGHT_A if player == 0 else RETRO_HIGHLIGHT_B
+            sh_color = RETRO_SHADOW_A if player == 0 else RETRO_SHADOW_B
 
+            is_flashing = (now_ms - self.tank_hit_flash.get(player, 0)) < 130
             scale = self.cell_size * 0.44
 
-            # Forward and orthogonal Right vectors for geometric projection
             forward = Vector2(1.0, 0.0).rotate(angle)
             right = forward.rotate(90.0)
 
-            # 1. Left and Right Treads (Bánh xích)
-            tread_w = scale * 1.70
-            tread_h = scale * 0.38
-            tread_offset = scale * 0.60
+            # Dimensions
+            tread_w = scale * 1.65
+            tread_h = scale * 0.40
+            tread_offset = scale * 0.58
 
-            for sign in (-1, 1):
-                tread_center = center + right * (sign * tread_offset)
-                tread_poly = create_chamfered_box(
-                    tread_center, tread_w, tread_h, chamfer=scale * 0.12, angle_deg=angle
+            hull_w = scale * 1.35
+            hull_h = scale * 1.05
+
+            if is_flashing:
+                # White-hot Damage Flash across entire tank silhouette
+                chassis_rect = pygame.Rect(0, 0, int(scale * 2.0), int(scale * 1.8))
+                chassis_rect.center = (int(center.x), int(center.y))
+                pygame.draw.rect(self.screen, (255, 255, 255), chassis_rect)
+                pygame.draw.rect(self.screen, (220, 50, 50), chassis_rect, width=2)
+            elif not is_active:
+                # Destroyed tank chassis (burnt wreckage)
+                for sign in (-1, 1):
+                    t_c = center + right * (sign * tread_offset)
+                    pts = self._rect_points(t_c, tread_w, tread_h, forward, right)
+                    pygame.draw.polygon(self.screen, (25, 28, 34), pts)
+                    pygame.draw.polygon(self.screen, RETRO_BOARD_BORDER, pts, 1)
+
+                h_pts = self._rect_points(center, hull_w, hull_h, forward, right)
+                pygame.draw.polygon(self.screen, (40, 42, 48), h_pts)
+                pygame.draw.polygon(self.screen, RETRO_BOARD_BORDER, h_pts, 1)
+                pygame.draw.circle(self.screen, (20, 22, 28), (int(center.x), int(center.y)), int(scale * 0.35))
+            else:
+                # 1. Left & Right Pixel Treads (Bánh xích)
+                for sign in (-1, 1):
+                    t_c = center + right * (sign * tread_offset)
+                    pts = self._rect_points(t_c, tread_w, tread_h, forward, right)
+                    pygame.draw.polygon(self.screen, (22, 25, 32), pts)
+                    pygame.draw.polygon(self.screen, RETRO_BOARD_BORDER, pts, 2)
+
+                    # Pixel tread teeth
+                    num_teeth = 5
+                    for t in range(num_teeth):
+                        fac = (t / (num_teeth - 1) - 0.5) * (tread_w * 0.75)
+                        tc = t_c + forward * fac
+                        p1 = tc + right * (tread_h * 0.45)
+                        p2 = tc - right * (tread_h * 0.45)
+                        pygame.draw.line(self.screen, (85, 95, 115), (int(p1.x), int(p1.y)), (int(p2.x), int(p2.y)), 2)
+
+                # 2. Main Chassis Hull (Thân xe pixel)
+                h_pts = self._rect_points(center, hull_w, hull_h, forward, right)
+                pygame.draw.polygon(self.screen, player_color, h_pts)
+                pygame.draw.polygon(self.screen, RETRO_BOARD_BORDER, h_pts, 2)
+
+                # Highlight stripe on hull top
+                stripe_c = center + forward * (hull_w * 0.15)
+                s_pts = self._rect_points(stripe_c, hull_w * 0.6, hull_h * 0.6, forward, right)
+                pygame.draw.polygon(self.screen, hi_color, s_pts)
+
+                # 3. Turret Box (Tháp pháo pixel)
+                turret_w = scale * 0.85
+                turret_h = scale * 0.85
+                turret_pts = self._rect_points(center, turret_w, turret_h, forward, right)
+                pygame.draw.polygon(self.screen, (24, 28, 40), turret_pts)
+                pygame.draw.polygon(self.screen, RETRO_BOARD_BORDER, turret_pts, 2)
+                pygame.draw.circle(self.screen, player_color, (int(center.x), int(center.y)), max(2, int(scale * 0.24)))
+
+                # 4. Pixel Cannon Barrel with Recoil
+                recoil = scale * 0.28 * math.sin(self.tank_recoil[player] * math.pi)
+                barrel_len = max(scale * 0.4, scale * 1.05 - recoil)
+                barrel_start = center + forward * (scale * 0.22)
+                barrel_end = barrel_start + forward * barrel_len
+                b_width = max(3, int(scale * 0.22))
+
+                pygame.draw.line(
+                    self.screen,
+                    RETRO_BOARD_BORDER,
+                    (int(barrel_start.x), int(barrel_start.y)),
+                    (int(barrel_end.x), int(barrel_end.y)),
+                    b_width + 2,
                 )
-                pygame.draw.polygon(self.screen, (24, 28, 36), tread_poly)
-                pygame.draw.polygon(self.screen, (45, 55, 70), tread_poly, width=1)
-
-                # Tread Segment Ridges with dynamic scrolling when moving
-                num_ridges = 6
-                ridge_gap = (tread_w * 0.75) / (num_ridges - 1)
-                scroll = (
-                    (self.tank_move_progress.get(player, 0.0) * ridge_gap * 2.5) % ridge_gap
-                    if self.tank_is_moving.get(player, False)
-                    else 0.0
+                pygame.draw.line(
+                    self.screen,
+                    (75, 88, 110),
+                    (int(barrel_start.x), int(barrel_start.y)),
+                    (int(barrel_end.x), int(barrel_end.y)),
+                    b_width,
                 )
-                for r in range(num_ridges):
-                    offset_factor = (r / (num_ridges - 1) - 0.5) * (tread_w * 0.75) + scroll
-                    if abs(offset_factor) > tread_w * 0.42:
-                        continue
-                    ridge_c = tread_center + forward * offset_factor
-                    p1 = ridge_c + right * (tread_h * 0.45)
-                    p2 = ridge_c - right * (tread_h * 0.45)
-                    pygame.draw.line(self.screen, (60, 72, 90), (int(p1.x), int(p1.y)), (int(p2.x), int(p2.y)), 1)
 
-            # 2. Chassis Main Hull (Thân xe vát góc)
-            chassis_w = scale * 1.45
-            chassis_h = scale * 1.15
-            chassis_poly = create_chamfered_box(
-                center, chassis_w, chassis_h, chamfer=scale * 0.28, angle_deg=angle
-            )
-            pygame.draw.polygon(self.screen, (32, 42, 56), chassis_poly)
+                # Muzzle Box at barrel tip
+                muzzle_p1 = barrel_end + right * (scale * 0.18)
+                muzzle_p2 = barrel_end - right * (scale * 0.18)
+                pygame.draw.line(
+                    self.screen,
+                    player_color,
+                    (int(muzzle_p1.x), int(muzzle_p1.y)),
+                    (int(muzzle_p2.x), int(muzzle_p2.y)),
+                    max(2, int(scale * 0.18)),
+                )
 
-            # Hull directional armor highlights
-            for i in range(len(chassis_poly)):
-                p1 = chassis_poly[i]
-                p2 = chassis_poly[(i + 1) % len(chassis_poly)]
-                normal = (p2 - p1).rotate(-90.0)
-                facet_c = calculate_bevel_lighting(normal, self.light_dir, (40, 52, 70), intensity=0.3)
-                pygame.draw.line(self.screen, facet_c, (int(p1.x), int(p1.y)), (int(p2.x), int(p2.y)), 2)
-
-            # Engine Deck Grill at the rear
-            rear_c = center - forward * (chassis_w * 0.32)
-            grill_poly = create_chamfered_box(
-                rear_c, scale * 0.35, scale * 0.65, chamfer=scale * 0.08, angle_deg=angle
-            )
-            pygame.draw.polygon(self.screen, (20, 25, 34), grill_poly)
-
-            # 3. Turret (Tháp pháo hình lục giác)
-            turret_poly = create_regular_polygon(center, scale * 0.52, sides=6, start_angle=angle)
-            pygame.draw.polygon(self.screen, (42, 56, 75), turret_poly)
-            pygame.draw.polygon(self.screen, color, turret_poly, width=2)
-
-            # 4. Main Cannon Barrel with Recoil Animation
-            recoil_dist = scale * 0.32 * math.sin(self.tank_recoil[player] * math.pi)
-            barrel_base_len = scale * 1.05
-            effective_len = max(scale * 0.4, barrel_base_len - recoil_dist)
-
-            barrel_start = center + forward * (scale * 0.25)
-            barrel_end = barrel_start + forward * effective_len
-            barrel_width = max(3, int(scale * 0.22))
-
-            pygame.draw.line(
-                self.screen,
-                (28, 36, 48),
-                (int(barrel_start.x), int(barrel_start.y)),
-                (int(barrel_end.x), int(barrel_end.y)),
-                barrel_width,
-            )
-            pygame.draw.line(
-                self.screen,
-                color,
-                (int(barrel_start.x), int(barrel_start.y)),
-                (int(barrel_end.x), int(barrel_end.y)),
-                max(1, barrel_width - 2),
+            # Per-Entity Health Bar for Tank (Positioned right above the tank)
+            bar_y = int(center.y - scale * 1.15)
+            self._draw_entity_hp_bar(
+                center_x=int(center.x),
+                y=bar_y,
+                hp=tank.hp,
+                max_hp=config.TANK_INITIAL_HP,
+                width=int(scale * 1.8),
+                label="TANK",
+                player_color=player_color,
             )
 
-            # Muzzle Brake at barrel tip
-            muzzle_w = scale * 0.18
-            muzzle_p1 = barrel_end + right * (muzzle_w * 0.9)
-            muzzle_p2 = barrel_end - right * (muzzle_w * 0.9)
-            pygame.draw.line(
-                self.screen,
-                (55, 70, 92),
-                (int(muzzle_p1.x), int(muzzle_p1.y)),
-                (int(muzzle_p2.x), int(muzzle_p2.y)),
-                max(2, int(scale * 0.16)),
-            )
+    def _rect_points(self, c: Vector2, w: float, h: float, fwd: Vector2, rgt: Vector2) -> list[tuple[int, int]]:
+        """Compute 4 rotated corner coordinates for pixel-art polygon rectangles."""
+        hw = w * 0.5
+        hh = h * 0.5
+        p1 = c + fwd * hw + rgt * hh
+        p2 = c - fwd * hw + rgt * hh
+        p3 = c - fwd * hw - rgt * hh
+        p4 = c + fwd * hw - rgt * hh
+        return [(int(p1.x), int(p1.y)), (int(p2.x), int(p2.y)), (int(p3.x), int(p3.y)), (int(p4.x), int(p4.y))]
 
-            # Commander Hatch in turret center
-            pygame.draw.circle(self.screen, (26, 34, 46), (int(center.x), int(center.y)), max(2, int(scale * 0.22)))
-            pygame.draw.circle(self.screen, color, (int(center.x), int(center.y)), max(1, int(scale * 0.12)))
+    def _draw_entity_hp_bar(
+        self,
+        center_x: int,
+        y: int,
+        hp: int,
+        max_hp: int,
+        width: int,
+        label: str,
+        player_color: tuple[int, int, int],
+    ) -> None:
+        """Render segmented pixel health bar with dark border and dynamic color."""
+        bar_h = 5
+        bar_x = center_x - width // 2
 
-            # Tank HP Badge
-            hp_bg = pygame.Rect(0, 0, 18, 14)
-            hp_bg.center = (int(center.x), int(center.y + scale * 0.85))
-            pygame.draw.rect(self.screen, CYBER_BG, hp_bg, border_radius=3)
-            pygame.draw.rect(self.screen, color, hp_bg, width=1, border_radius=3)
-            hp_lbl = self.tiny_font.render(str(tank.hp), True, CYBER_TEXT_MAIN)
-            self.screen.blit(hp_lbl, hp_lbl.get_rect(center=hp_bg.center))
+        # 1. Outer Dark Box
+        pygame.draw.rect(self.screen, (10, 12, 16), (bar_x - 1, y - 1, width + 2, bar_h + 2))
 
-    def _draw_bullets(self, state: GameState, offset: Vector2, now_ms: int) -> None:
-        """Render aerodynamic projectile darts with smooth continuous flight interpolation."""
+        # 2. Segmented Blocks
+        curr_hp = max(0, min(hp, max_hp))
+        num_blocks = max_hp
+        gap = 1
+        block_w = max(1, (width - (num_blocks - 1) * gap) // num_blocks)
+
+        for i in range(num_blocks):
+            bx = bar_x + i * (block_w + gap)
+            block_rect = pygame.Rect(bx, y, block_w, bar_h)
+            if i < curr_hp:
+                # Color code health: Green -> Yellow -> Red
+                if curr_hp > max_hp * 0.55:
+                    c = RETRO_HP_GREEN
+                elif curr_hp > max_hp * 0.28:
+                    c = RETRO_HP_YELLOW
+                else:
+                    c = RETRO_HP_RED
+                pygame.draw.rect(self.screen, c, block_rect)
+            else:
+                # Depleted slot
+                pygame.draw.rect(self.screen, (32, 36, 46), block_rect)
+
+        # 3. Mini HP Text badge
+        hp_str = f"{curr_hp}"
+        txt = self.tiny_font.render(hp_str, False, (240, 244, 252))
+        shadow = self.tiny_font.render(hp_str, False, (0, 0, 0))
+        tx = bar_x + width + 3
+        ty = y - 3
+        self.screen.blit(shadow, (tx + 1, ty + 1))
+        self.screen.blit(txt, (tx, ty))
+
+    def _draw_pixel_bullets(self, state: GameState, offset: Vector2, now_ms: int) -> None:
+        """Render retro projectile diamond bullets with pixel smoke trail."""
         elapsed_tick = now_ms - self.last_tick_time
-        bullet_t = clamp(elapsed_tick / max(60.0, float(self.turn_ms)), 0.0, 1.0)
+        bullet_t = elapsed_tick / max(60.0, self.turn_ms * 0.8)
+        if bullet_t >= 1.0:
+            return
 
-        for bullet in state.bullets:
-            dr, dc = bullet.direction.delta
-            prev_pos = Position(bullet.position.row - dr, bullet.position.column - dc)
-            start_pos = self._tile_center_vec(prev_pos)
-            target_pos = self._tile_center_vec(bullet.position)
+        for flight in state.bullet_flights:
+            if flight.start == flight.end:
+                continue
+            start_pos = self._tile_center_vec(flight.start)
+            target_pos = self._tile_center_vec(flight.end)
 
-            # Continuous linear trajectory interpolation across the tile boundary
+            # Continuous motion
             center = start_pos.lerp(target_pos, bullet_t) + offset
-            angle = self._direction_to_angle(bullet.direction)
-            forward = Vector2(1.0, 0.0).rotate(angle)
-            right = forward.rotate(90.0)
+            forward = (target_pos - start_pos).normalize() if (target_pos - start_pos).length_squared() > 0.001 else Vector2(1, 0)
 
-            dart_len = self.cell_size * 0.32
-            dart_w = self.cell_size * 0.14
+            # Diamond Pixel Dart
+            sz = 6
+            bx = int(center.x - sz // 2)
+            by = int(center.y - sz // 2)
 
-            # 1. Multi-layered Plasma Glow Halo (Transparent radial alpha disks)
-            glow_surf = pygame.Surface((self.cell_size * 2, self.cell_size * 2), pygame.SRCALPHA)
-            local_center = (self.cell_size, self.cell_size)
-            for layer in range(3):
-                r = int(self.cell_size * (0.35 - layer * 0.08))
-                alpha = int(clamp(lerp(40.0, 150.0, layer / 2.0), 0.0, 255.0))
-                pygame.draw.circle(glow_surf, (*CYBER_BULLET_GLOW, alpha), local_center, r)
-            self.screen.blit(
-                glow_surf,
-                (int(center.x - self.cell_size), int(center.y - self.cell_size)),
-            )
+            # Outer black pixel outline
+            pygame.draw.rect(self.screen, RETRO_BOARD_BORDER, (bx - 1, by - 1, sz + 2, sz + 2))
+            # Golden Core
+            pygame.draw.rect(self.screen, (255, 235, 60), (bx, by, sz, sz))
+            # Center white sparkle
+            pygame.draw.rect(self.screen, (255, 255, 255), (bx + 1, by + 1, sz - 2, sz - 2))
 
-            # 2. Aerodynamic Dart Polygon
-            tip = center + forward * (dart_len * 0.6)
-            left_wing = center - forward * (dart_len * 0.4) + right * (dart_w * 0.6)
-            tail = center - forward * (dart_len * 0.5)
-            right_wing = center - forward * (dart_len * 0.4) - right * (dart_w * 0.6)
-
-            dart_pts = [tip, left_wing, tail, right_wing]
-            pygame.draw.polygon(self.screen, CYBER_BULLET_CORE, dart_pts)
-            pygame.draw.polygon(self.screen, (255, 255, 255), dart_pts, width=1)
-
-            # 3. Dynamic thruster exhaust sparks
-            backward = -forward
-            tail_pos = center + backward * (dart_len * 0.5)
+            # Backward pixel exhaust spark
+            tail = center - forward * 5.0
             from .effects import Particle
             import random
             self.particle_mgr.particles.append(
                 Particle(
-                    pos=tail_pos,
-                    vel=backward * random.uniform(1.2, 2.5) + Vector2(random.uniform(-0.5, 0.5), random.uniform(-0.5, 0.5)),
-                    color=(255, 210, 80),
-                    size=random.uniform(2.0, 3.2),
-                    life_seconds=random.uniform(0.12, 0.20),
-                    friction=0.88,
+                    pos=tail,
+                    vel=-forward * random.uniform(1.0, 2.0) + Vector2(random.uniform(-0.5, 0.5), random.uniform(-0.5, 0.5)),
+                    color=(255, 140, 40),
+                    size=2.0,
+                    life_seconds=0.14,
+                    pixel_block=True,
                 )
             )

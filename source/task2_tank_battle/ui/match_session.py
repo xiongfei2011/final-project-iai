@@ -44,6 +44,13 @@ class MatchSession:
     def map_name(self) -> str:
         return self._map_name
 
+    def set_turn_ms(self, turn_ms: int) -> None:
+        self.turn_ms = max(50, turn_ms)
+        if self._player is not None:
+            self._player.turn_ms = self.turn_ms
+        if self._match is not None:
+            self._match.turn_ms = self.turn_ms
+
     def handle(self, command: PanelCommand, now_ms: int) -> None:
         if isinstance(command, tuple):
             selector, value = command
@@ -59,6 +66,16 @@ class MatchSession:
             self.reset()
         elif command == "play":
             self._toggle_play(now_ms)
+        elif command == "faster":
+            self.set_turn_ms(max(60, self.turn_ms - 50))
+        elif command == "slower":
+            self.set_turn_ms(min(1200, self.turn_ms + 50))
+        elif command == "speed_1":
+            self.set_turn_ms(450)
+        elif command == "speed_2":
+            self.set_turn_ms(220)
+        elif command == "speed_3":
+            self.set_turn_ms(110)
         elif command in ("backward", "forward") and self._player is not None:
             player = self._player
             self._single_step = (

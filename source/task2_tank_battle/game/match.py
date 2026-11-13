@@ -29,6 +29,7 @@ class Match:
         self._pending: dict[int, SimpleQueue[_AgentReply]] = {}
         self._played_states: set[GameStateKey] = {state.search_key()}
         self._board_repeated = False
+        self._last_actions: dict[int, str] = {}
         self._check_finished()
 
     def update(self, now_ms: int) -> None:
@@ -73,6 +74,7 @@ class Match:
     def _agent_state(self, player: int) -> GameState:
         snapshot = self.state.clone()
         snapshot.current_turn = player
+        snapshot.previous_action = self._last_actions.get(player)
         snapshot.played_states = (
             frozenset(key._replace(current_turn=player) for key in self._played_states)
             if self._board_repeated else frozenset()
@@ -115,6 +117,7 @@ class Match:
 
     def _advance_tick(self, actions: dict[int, str]) -> dict[int, str]:
         self.state = self.rules.result_tick(self.state, actions)
+        self._last_actions = actions.copy()
         key = self.state.search_key()
         self._board_repeated = key in self._played_states
         self._played_states.add(key)

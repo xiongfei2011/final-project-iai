@@ -16,7 +16,13 @@ class GameStateKey(NamedTuple):
     tanks: tuple[tuple[int, Position, Direction, int], ...]
     bases: tuple[tuple[int, Position, int], ...]
     walls: tuple[tuple[Position, int], ...]
-    bullets: tuple[tuple[Position, str, int], ...]
+    bullets: tuple[tuple[Position, str, int, int], ...]
+
+
+class BulletFlight(NamedTuple):
+    start: Position
+    end: Position
+    owner: int | None
 
 
 @dataclass
@@ -45,14 +51,17 @@ class GameState:
     bases: dict[int, Base]
     # Agent snapshots use this as their perspective, not as a live turn lock.
     current_turn: int
-    # Draw these final positions for one tick without treating them as active shots.
+    # Replay data is separate from active shots and from the search key.
     expired_bullet_positions: tuple[Position, ...] = field(
         default=(), compare=False, repr=False
     )
+    bullet_flights: tuple[BulletFlight, ...] = field(default=(), compare=False, repr=False)
     # Match supplies this history when the current board has already occurred.
     played_states: frozenset[GameStateKey] = field(
         default_factory=frozenset, compare=False, repr=False
     )
+    # Match records the previous tick's action for this agent's perspective.
+    previous_action: str | None = field(default=None, compare=False, repr=False)
 
     def search_key(self) -> GameStateKey:
         """Take a hashable snapshot of the fields that affect play."""
@@ -71,7 +80,8 @@ class GameState:
                 (position, wall.hp) for position, wall in self.game_map.walls.items()
             )),
             bullets=tuple(sorted(
-                (bullet.position, bullet.direction.value, bullet.steps_left)
+                (bullet.position, bullet.direction.value, bullet.steps_left,
+                 bullet.owner if bullet.owner is not None else -1)
                 for bullet in self.bullets
             )),
         )

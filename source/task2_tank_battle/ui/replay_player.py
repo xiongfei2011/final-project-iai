@@ -21,6 +21,11 @@ class ReplayPlayer:
     def turn_ms(self) -> int:
         return self._turn_ms
 
+    @turn_ms.setter
+    def turn_ms(self, value: int) -> None:
+        if value > 0:
+            self._turn_ms = value
+
     @property
     def step(self) -> int:
         return self._index

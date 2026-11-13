@@ -48,6 +48,7 @@ class Bullet:
     position: Position
     direction: Direction
     steps_left: int = BULLET_MAX_RANGE
+    owner: int | None = None
 
     def next_position(self) -> Position:
         return self.position.moved(self.direction)

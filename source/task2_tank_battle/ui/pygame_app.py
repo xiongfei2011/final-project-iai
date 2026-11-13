@@ -17,6 +17,11 @@ KEY_COMMANDS = {
     pygame.K_RIGHT: "forward",
     pygame.K_r: "reset",
     pygame.K_ESCAPE: "quit",
+    pygame.K_UP: "faster",
+    pygame.K_DOWN: "slower",
+    pygame.K_1: "speed_1",
+    pygame.K_2: "speed_2",
+    pygame.K_3: "speed_3",
 }
 
 
@@ -87,6 +92,7 @@ def _handle_events(
             return True
         if session is not None and command is not None:
             session.handle(command, now_ms)
+            view.set_turn_ms(session.turn_ms)
         elif replay is not None:
             if command == "play":
                 replay.toggle(now_ms)
@@ -94,4 +100,19 @@ def _handle_events(
                 replay.seek(0)
             elif command in ("backward", "forward"):
                 replay.seek(replay.step + (-1 if command == "backward" else 1))
+            elif command == "faster":
+                replay.turn_ms = max(60, replay.turn_ms - 50)
+                view.set_turn_ms(replay.turn_ms)
+            elif command == "slower":
+                replay.turn_ms = min(1200, replay.turn_ms + 50)
+                view.set_turn_ms(replay.turn_ms)
+            elif command == "speed_1":
+                replay.turn_ms = 450
+                view.set_turn_ms(replay.turn_ms)
+            elif command == "speed_2":
+                replay.turn_ms = 220
+                view.set_turn_ms(replay.turn_ms)
+            elif command == "speed_3":
+                replay.turn_ms = 110
+                view.set_turn_ms(replay.turn_ms)
     return False

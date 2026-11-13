@@ -1,8 +1,9 @@
 """Legal moves and state transitions for tank battle."""
 
+from ..config import BULLET_STEPS_PER_TURN
 from .actions import MOVE_ACTIONS, Action
 from .entities import Bullet, Damageable, Position
-from .state import GameState
+from .state import BulletFlight, GameState
 
 
 class GameRules:
@@ -16,7 +17,10 @@ class GameRules:
             player = state.current_turn
         board = state.game_map
         position = state.tanks[player].position
-        legal_actions = [Action.FIRE.value, Action.STAY.value]
+        legal_actions = []
+        if not any(bullet.owner == player and bullet.steps_left > 0 for bullet in state.bullets):
+            legal_actions.append(Action.FIRE.value)
+        legal_actions.append(Action.STAY.value)
 
         for action in MOVE_ACTIONS:
             direction = action.direction
@@ -71,6 +75,7 @@ class GameRules:
 
         next_state = state.clone()
         next_state.expired_bullet_positions = ()
+        next_state.bullet_flights = ()
         contested = len(destinations) == 2 and len(set(destinations.values())) == 1
 
         for player in sorted(commands):
@@ -80,7 +85,7 @@ class GameRules:
                 )
 
         if not self.terminal_test(next_state) and next_state.bullets:
-            self._advance_bullets_one_step(next_state)
+            self._advance_bullets(next_state)
 
         return next_state
 
@@ -99,37 +104,53 @@ class GameRules:
             if destination is not None:
                 tank.position = destination
         elif action is Action.FIRE:
-            bullet = Bullet(position=tank.position, direction=tank.direction)
+            bullet = Bullet(position=tank.position, direction=tank.direction, owner=player)
             state.bullets.append(bullet)
 
-    def _advance_bullets_one_step(self, state: GameState) -> None:
+    def _advance_bullets(self, state: GameState) -> None:
         board = state.game_map
         targets: dict[Position, Damageable] = {
             entity.position: entity
             for entity in (*state.tanks.values(), *state.bases.values())
         }
-        hits: list[Damageable] = []
-        remaining_bullets: list[Bullet] = []
+        active = [(bullet.position, bullet) for bullet in state.bullets if bullet.steps_left > 0]
+        flights: list[BulletFlight] = []
         expired_positions: list[Position] = []
 
-        for bullet in state.bullets:
-            if bullet.steps_left <= 0:
-                continue
-            target = bullet.next_position()
-            if not board.in_bounds(target):
-                continue
+        for _ in range(BULLET_STEPS_PER_TURN):
+            if not active:
+                break
+            hits: list[Damageable] = []
+            moving = []
+            for start, bullet in active:
+                target = bullet.next_position()
+                if not board.in_bounds(target):
+                    flights.append(BulletFlight(start, bullet.position, bullet.owner))
+                    continue
 
-            hit = board.wall_at(target) or targets.get(target)
-            if hit is not None:
-                hits.append(hit)
-            elif bullet.steps_left > 1:
                 bullet.position = target
                 bullet.steps_left -= 1
-                remaining_bullets.append(bullet)
-            else:
-                expired_positions.append(target)
+                hit = board.wall_at(target) or targets.get(target)
+                if hit is not None:
+                    hits.append(hit)
+                elif bullet.steps_left > 0:
+                    moving.append((start, bullet))
+                    continue
+                else:
+                    expired_positions.append(target)
+                flights.append(BulletFlight(start, target, bullet.owner))
 
-        for hit in hits:
-            hit.take_hit()
-        state.bullets = remaining_bullets
+            # Apply hits at the same distance step together before checking the result.
+            for hit in hits:
+                hit.take_hit()
+            active = moving
+            if self.terminal_test(state):
+                flights.extend(BulletFlight(start, bullet.position, bullet.owner)
+                               for start, bullet in active)
+                active = []
+                break
+
+        flights.extend(BulletFlight(start, bullet.position, bullet.owner) for start, bullet in active)
+        state.bullets = [bullet for _, bullet in active]
+        state.bullet_flights = tuple(flights)
         state.expired_bullet_positions = tuple(expired_positions)

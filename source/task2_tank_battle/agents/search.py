@@ -53,8 +53,12 @@ class SearchAgent(ABC):
         if self.rules.terminal_test(state):
             return None, self.rules.utility(state, max_player)
 
-        if root_action is None and state.played_states:
-            actions = self._prefer_new_boards(state, max_player, actions)
+        if root_action is None:
+            if state.played_states:
+                actions = self._prefer_new_boards(state, max_player, actions)
+            if state.previous_action in actions:
+                # Keep the earlier action on a score tie, so try the last action last.
+                actions = sorted(actions, key=lambda action: action == state.previous_action)
         return self._best_action(
             state, max_player, actions, -inf, inf, depth=0, visited_states=set()
         )

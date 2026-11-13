@@ -23,7 +23,7 @@ BASE_INITIAL_HP = 6
 WALL_INITIAL_HP = 3
 DAMAGE_PER_HIT = 1
 
-# A bullet moves one cell per tick and expires at this range.
+# A bullet can cover its full range in the tick when it is fired.
 BULLET_MAX_RANGE = 3
 BULLET_STEPS_PER_TURN = BULLET_MAX_RANGE  # Compatibility for partner agents.
 

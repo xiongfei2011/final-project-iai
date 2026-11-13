@@ -256,7 +256,7 @@ def main():
             comparisons.append(compare_pair(by_configuration[plain], by_configuration[pruned], args.depth))
 
     print("States count the root at depth 0 and every visited search node, including leaves.")
-    print("One tick applies both players' actions and moves bullets one cell.")
+    print("One tick applies both players' actions and moves bullets up to three cells.")
     print("Time, states and depth use medians of completed runs.")
     print("Any timed-out run marks its row as timeout. Metrics are blank when no run completes.")
     print_table(rows)

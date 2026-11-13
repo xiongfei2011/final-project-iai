@@ -50,12 +50,12 @@ state with no bullets on the board. The benchmark times one search.
 | Map | Rows × columns | Starting base HP | What to expect at depth 3 |
 | --- | --- | --- | --- |
 | `opening_win` | 2 × 3 | 1 each | A can destroy B's base in 1 tick. |
-| `opening_draw` | 2 × 4 | 1 each | Both bases are destroyed in 2 ticks if both tanks fire. |
-| `opening_loss` | 3 × 5 | 1 each | B can destroy A's base in 3 ticks. |
+| `opening_draw` | 2 × 4 | 1 each | Both bases are destroyed in the opening tick if both tanks fire. |
+| `opening_loss` | 3 × 5 | 1 each | B can destroy A's base in the opening tick. |
 | `heuristic_cutoff` | 2 × 4 | Standard HP | The heuristic agents assign a value to unfinished boards at the cutoff. |
 
-Use depth 3 or more to see all three terminal outcomes. With a shallower
-limit, a search can stop before the winning shot arrives.
+Depth 3 also explores alternatives to the opening shots and gives the
+heuristic agents more room to distinguish unfinished boards.
 
 ### T2-04 - Tank Battle Pygame
 
@@ -74,10 +74,12 @@ the agents finish planning the match. Use `--live` to play while the
 agents are still choosing.
 
 `--turn-ms` sets the interval between game ticks. Each tank can act once per
-tick when its AI has a move ready. A tank may fire while earlier shots are
-still on the board. Bullets move one cell per tick, check for impact on that
-cell, and disappear on impact, on leaving the board, or after three cells.
-A shot that reaches its range is drawn on its last cell for that tick.
+tick when its AI has a move ready. A tank can fire once its previous shot
+has disappeared. Each shot moves up to three cells in the same tick,
+checking for an impact in each cell. It disappears on impact, on leaving
+the board, or after reaching its range, so a tank can fire again on the
+next tick. Hits in the same movement step are applied together. The
+replay animates the shot over the cells it travelled.
 If a movement command targets a wall, tank, or base, the tank turns in that
 direction and stays in its current cell.
 If both tanks try to enter the same cell, both stay put.
@@ -97,9 +99,11 @@ python -m task2_tank_battle.main --map task2_tank_battle/maps/example.txt --turn
 ```
 
 At each planning tick the game starts both AI searches from the same board and waits for
-both answers. When a board repeats during a match, the built-in agents
-break score ties in favor of actions that lead to fewer previously seen
-boards across the opponent's possible replies.
+both answers. When actions have the same search value, the built-in agents
+prefer an action different from the one they used in the previous tick.
+When the board also repeats, they prefer actions that lead to fewer
+previously seen boards across the opponent's possible replies among the
+remaining tied choices.
 The replay reads the saved board states and actions. In live play an AI that
 is still thinking can miss a tick.
 The panel shows tank and base HP for the current step. Press Space to play
