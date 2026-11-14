@@ -1,8 +1,9 @@
 from abc import ABC, abstractmethod
+from contextlib import nullcontext
 from math import inf
+from time import perf_counter
 from typing import Protocol, runtime_checkable
 
-from ..config import DEFAULT_SEARCH_DEPTH
 from ..game.actions import Action
 from ..game.rules import GameRules
 from ..game.state import GameState, GameStateKey
@@ -14,6 +15,10 @@ from .metrics import SearchMetrics
 class Agent(Protocol):
     def choose_action(self, state: GameState) -> Action | str | None:  # Trả về action
         ...
+
+
+class _SearchDeadlineReached(Exception):
+    pass
 
 
 class SearchAgent(ABC):
@@ -33,6 +38,8 @@ class SearchAgent(ABC):
         self.depth_limit = depth_limit
         self.evaluator = evaluator
         self.metrics = SearchMetrics()
+        self._deadline: float | None = None
+        self._evaluation_scores: dict[GameStateKey, float] | None = None
 
     @property
     def states_visited(self) -> int:
@@ -45,6 +52,7 @@ class SearchAgent(ABC):
     def search(
         self, state: GameState, *, root_action: str | None = None
     ) -> tuple[str | None, float]:
+        self._check_deadline()
         self.metrics = SearchMetrics(nodes_visited=1)  # The root is at depth 0.
         max_player = state.current_turn
         actions = self.rules.actions(state, max_player)
@@ -74,8 +82,9 @@ class SearchAgent(ABC):
         def count_repeats(action: str) -> int:
             repeats = 0
             for reply in replies:
-                child = self.rules.result_tick(state, {player: action, 1 - player: reply})
-                if child.search_key() in state.played_states:
+                self._check_deadline()
+                children = self.rules.possible_results(state, {player: action, 1 - player: reply})
+                if any(child.search_key() in state.played_states for child in children):
                     repeats += 1
             return repeats
 
@@ -137,19 +146,23 @@ class SearchAgent(ABC):
         worst_score = inf
 
         for index, reply in enumerate(replies):
-            child = self.rules.result_tick(
+            self._check_deadline()
+            children = self.rules.possible_results(
                 state, {max_player: action, 1 - max_player: reply}
             )
-            score = self._value(
-                child, max_player, alpha, beta, depth + 1, visited_states
-            )
-            worst_score = min(worst_score, score)
-            alpha, beta = self._update_bounds(
-                alpha, beta, worst_score, maximizing=False
-            )
-            if beta <= alpha:
-                self.metrics.alpha_beta_cutoffs += int(index + 1 < len(replies))
-                break
+            # Use the worst outcome when a contested move has no known winner.
+            for child_index, child in enumerate(children):
+                score = self._value(
+                    child, max_player, alpha, beta, depth + 1, visited_states
+                )
+                worst_score = min(worst_score, score)
+                alpha, beta = self._update_bounds(
+                    alpha, beta, worst_score, maximizing=False
+                )
+                if beta <= alpha:
+                    if child_index + 1 < len(children) or index + 1 < len(replies):
+                        self.metrics.alpha_beta_cutoffs += 1
+                    return worst_score
         return worst_score
 
     def _value(
@@ -162,16 +175,24 @@ class SearchAgent(ABC):
         visited_states: set[GameStateKey],
     ) -> float:
 
+        self._check_deadline()
         self.metrics.visit(depth)
 
-        if state.search_key() in visited_states:
+        state_key = state.search_key()
+        if state_key in visited_states:
             return 0.0
         if self.rules.terminal_test(state):
             return self.rules.utility(state, max_player)
         if self.depth_limit is not None and depth >= self.depth_limit:
-            if self.evaluator is not None:
+            if self.evaluator is None:
+                return 0.0
+            scores = self._evaluation_scores
+            if scores is None:
                 return self.evaluator.evaluate(state, max_player)
-            return 0.0
+            # Cache only the heuristic for this board, never a path-dependent search value.
+            if state_key not in scores:
+                scores[state_key] = self.evaluator.evaluate(state, max_player)
+            return scores[state_key]
 
         actions = self.rules.actions(state, max_player)
 
@@ -189,6 +210,47 @@ class SearchAgent(ABC):
         action, _ = self.search(state)
         return action
 
+    def choose_action_with_budget(self, state: GameState, budget_ms: float) -> str | None:
+        deadline = perf_counter() + budget_ms / 1000
+        if self.rules.terminal_test(state):
+            return None
+
+        best_action = Action.STAY.value
+        completed_metrics = SearchMetrics()
+        max_depth = self.depth_limit
+        self._deadline = deadline
+        if isinstance(self.evaluator, HeuristicEvaluator):
+            self._evaluation_scores = {}
+        pathfinding = (
+            self.evaluator.reuse_pathfinding()
+            if isinstance(self.evaluator, HeuristicEvaluator)
+            else nullcontext()
+        )
+        try:
+            with pathfinding:
+                depth = 1
+                while max_depth is None or depth <= max_depth:
+                    self.depth_limit = depth
+                    action, _ = self.search(state)
+                    self._check_deadline()
+                    best_action = action
+                    completed_metrics = self.metrics
+                    if completed_metrics.max_depth < depth:
+                        break
+                    depth += 1
+        except (_SearchDeadlineReached, RecursionError):
+            pass
+        finally:
+            self.depth_limit = max_depth
+            self._deadline = None
+            self._evaluation_scores = None
+            self.metrics = completed_metrics
+        return best_action
+
+    def _check_deadline(self) -> None:
+        if self._deadline is not None and perf_counter() >= self._deadline:
+            raise _SearchDeadlineReached
+
 
 class MinimaxAgent(SearchAgent):
     def _update_bounds(
@@ -204,31 +266,3 @@ class AlphaBetaAgent(SearchAgent):
         if maximizing:
             return max(alpha, best_score), beta
         return alpha, min(beta, best_score)
-
-
-def create_minimax_agent(
-    rules: GameRules, depth_limit: int | None = DEFAULT_SEARCH_DEPTH
-) -> MinimaxAgent:
-    return MinimaxAgent(rules, depth_limit)
-
-
-def create_alpha_beta_agent(
-    rules: GameRules, depth_limit: int | None = DEFAULT_SEARCH_DEPTH
-) -> AlphaBetaAgent:
-    return AlphaBetaAgent(rules, depth_limit)
-
-
-def create_heuristic_minimax_agent(
-    rules: GameRules, depth_limit: int = DEFAULT_SEARCH_DEPTH
-) -> MinimaxAgent:
-    return MinimaxAgent(
-        rules, depth_limit=depth_limit, evaluator=HeuristicEvaluator(rules)
-    )
-
-
-def create_heuristic_minimax_alpha_beta_agent(
-    rules: GameRules, depth_limit: int = DEFAULT_SEARCH_DEPTH
-) -> AlphaBetaAgent:
-    return AlphaBetaAgent(
-        rules, depth_limit=depth_limit, evaluator=HeuristicEvaluator(rules)
-    )

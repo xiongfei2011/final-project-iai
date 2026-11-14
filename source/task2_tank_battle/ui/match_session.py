@@ -5,9 +5,9 @@ from collections.abc import Callable, Mapping
 from queue import Empty, SimpleQueue
 from threading import Event, Thread
 
-from ..agents.loader import BUILT_IN_AGENTS
+from ..agents.loader import AgentLoader
 from ..game.match import Match
-from ..game.replay import Replay, ReplayFrame, record_match
+from ..game.replay import Replay, ReplayFrame
 from ..game.state import GameState
 from .control_panel import PanelCommand, PanelState
 from .replay_player import ReplayPlayer
@@ -24,7 +24,7 @@ class MatchSession:
         self._map_name = map_name
         self._map_loaders = map_loaders
         self._agent_specs = agent_specs
-        self._agent_options = tuple(dict.fromkeys((*BUILT_IN_AGENTS, *agent_specs)))
+        self._agent_options = tuple(dict.fromkeys((*AgentLoader.BUILT_IN_AGENTS, *agent_specs)))
         self.turn_ms = turn_ms
         self._make_match = make_match
         self._live = live
@@ -136,7 +136,7 @@ class MatchSession:
     def _plan(self, state: GameState, specs: tuple[str, str], stop: Event) -> None:
         try:
             match = self._make_match(state, specs)
-            replay = record_match(match, stop_requested=stop.is_set)
+            replay = Replay.record(match, stop_requested=stop.is_set)
         except Exception as error:
             self._plan_result.put(error)
         else:
@@ -164,9 +164,9 @@ class MatchSession:
             return
         if match is not None and match.message is None and player.step == player.total:
             if not player.paused or self._single_step:
-                match.update(now_ms)
-                if match.tick > player.total:
-                    player.append_live_frame(ReplayFrame(match.state))
+                actions = match.update(now_ms)
+                if actions is not None:
+                    player.append_live_frame(ReplayFrame(match.state, tuple(sorted(actions.items()))))
                     self._single_step = False
         else:
             player.update(now_ms)

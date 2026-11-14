@@ -97,6 +97,9 @@ class ControlPanel:
         self._buttons: list[tuple[pygame.Rect, str]] = []
         self._selectors: list[tuple[pygame.Rect, Selector]] = []
         self._options: list[tuple[pygame.Rect, tuple[Selector, str]]] = []
+        # Text rendering cache: (text, font_id, color, shadow) → Surface
+        self._text_cache: dict[tuple, pygame.Surface] = {}
+        self._text_shadow_cache: dict[tuple, pygame.Surface] = {}
 
     def click(self, position: tuple[int, int]) -> PanelCommand | None:
         for rect, choice in self._options:
@@ -406,12 +409,21 @@ class ControlPanel:
         if enabled:
             self._buttons.append((rect, command))
 
-        # Text with 1px shadow
-        shadow_txt = self._font.render(label, False, PIXEL_BORDER)
-        surf = self._font.render(label, False, txt_col)
+        # Text with 1px shadow (cached)
+        sk = (label, id(self._font), PIXEL_BORDER)
+        shadow_txt = self._text_shadow_cache.get(sk)
+        if shadow_txt is None:
+            shadow_txt = self._font.render(label, False, PIXEL_BORDER)
+            self._text_shadow_cache[sk] = shadow_txt
+
+        tk = (label, id(self._font), txt_col)
+        surf = self._text_cache.get(tk)
+        if surf is None:
+            surf = self._font.render(label, False, txt_col)
+            self._text_cache[tk] = surf
+
         text_center = rect.center
         if hovered:
-            # Subtle 1px depression effect
             text_center = (text_center[0] + 1, text_center[1] + 1)
         self._screen.blit(shadow_txt, shadow_txt.get_rect(center=(text_center[0] + 1, text_center[1] + 1)))
         self._screen.blit(surf, surf.get_rect(center=text_center))
@@ -486,11 +498,23 @@ class ControlPanel:
         color: tuple[int, int, int],
         shadow: bool = False,
     ) -> None:
+        # Truncation (use font.size which is fast C call)
         if font.size(text)[0] > width:
             while text and font.size(text + "...")[0] > width:
                 text = text[:-1]
             text += "..."
+        # Use id(font) as cheap key component
+        fid = id(font)
         if shadow:
-            shadow_surf = font.render(text, False, PIXEL_BORDER)
-            self._screen.blit(shadow_surf, (position[0] + 1, position[1] + 1))
-        self._screen.blit(font.render(text, False, color), position)
+            sk = (text, fid, PIXEL_BORDER)
+            s_surf = self._text_shadow_cache.get(sk)
+            if s_surf is None:
+                s_surf = font.render(text, False, PIXEL_BORDER)
+                self._text_shadow_cache[sk] = s_surf
+            self._screen.blit(s_surf, (position[0] + 1, position[1] + 1))
+        key = (text, fid, color)
+        surf = self._text_cache.get(key)
+        if surf is None:
+            surf = font.render(text, False, color)
+            self._text_cache[key] = surf
+        self._screen.blit(surf, position)

@@ -6,6 +6,9 @@ from .state import BulletFlight, GameState
 
 class GameRules:
 
+    def __init__(self, *, prioritize_first_reply: bool = False) -> None:
+        self.prioritize_first_reply = prioritize_first_reply
+
     def actions(self, state: GameState, player: int | None = None) -> list[str]:
         if self.terminal_test(state):
             return []
@@ -47,8 +50,28 @@ class GameRules:
             next_state.current_turn = 1 - state.current_turn
         return next_state
 
-    def result_tick(self, state: GameState, actions: dict[int, str]) -> GameState:
-        """Resolve moves and turns on the same board before advancing bullets."""
+    def result_tick(
+        self, state: GameState, actions: dict[int, str], *, first_reply: int | None = None
+    ) -> GameState:
+        """Resolve both commands, using the first reply to break a contested move."""
+        commands, destinations, contested = self._plan_moves(state, actions)
+        return self._resolve_tick(state, commands, destinations, contested, first_reply)
+
+    def possible_results(self, state: GameState, actions: dict[int, str]) -> tuple[GameState, ...]:
+        """Return both possible boards if a live contest has no known winner yet."""
+        if not self.prioritize_first_reply:
+            return (self.result_tick(state, actions),)
+        commands, destinations, contested = self._plan_moves(state, actions)
+        if not contested:
+            return (self._resolve_tick(state, commands, destinations, contested, None),)
+        return tuple(
+            self._resolve_tick(state, commands, destinations, contested, player)
+            for player in destinations
+        )
+
+    def _plan_moves(
+        self, state: GameState, actions: dict[int, str]
+    ) -> tuple[dict[int, Action], dict[int, Position], bool]:
         commands = {}
         destinations = {}
         board = state.game_map
@@ -68,15 +91,27 @@ class GameRules:
                 if target not in occupied and board.wall_at(target) is None:
                     destinations[player] = target
 
+        contested = len(destinations) == 2 and len(set(destinations.values())) == 1
+        return commands, destinations, contested
+
+    def _resolve_tick(
+        self,
+        state: GameState,
+        commands: dict[int, Action],
+        destinations: dict[int, Position],
+        contested: bool,
+        first_reply: int | None,
+    ) -> GameState:
         next_state = state.clone()
         next_state.bullet_flights = ()
-        contested = len(destinations) == 2 and len(set(destinations.values())) == 1
-
-        for player in sorted(commands):
-            if not (contested and player in destinations):
-                self._apply_action(
-                    next_state, player, commands[player], destinations.get(player)
-                )
+        if contested and first_reply is not None and first_reply in destinations:
+            winner = first_reply
+            self._apply_action(next_state, winner, commands[winner], destinations[winner])
+            loser = 1 - winner
+            self._apply_action(next_state, loser, commands[loser], None)
+        elif not contested:
+            for player in sorted(commands):
+                self._apply_action(next_state, player, commands[player], destinations.get(player))
 
         if not self.terminal_test(next_state) and next_state.bullets:
             self._advance_bullets(next_state)

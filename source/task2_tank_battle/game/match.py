@@ -1,14 +1,21 @@
 import sys
 from queue import Empty, SimpleQueue
 from threading import Thread
+from time import perf_counter_ns
+from typing import NamedTuple
 
 from .. import config
-from ..agents.search import Agent
+from ..agents.search import Agent, SearchAgent
+from .actions import Action
 from .rules import GameRules
 from .state import GameState, GameStateKey
 
 
-_AgentReply = tuple[object, str | None, list[str]]
+class _AgentReply(NamedTuple):
+    action: object
+    error: str | None
+    legal_actions: list[str]
+    finished_at_ns: int
 
 
 class Match:
@@ -24,13 +31,13 @@ class Match:
         self.tick = 0
         self.message: str | None = None
         self._next_tick_at: int | None = None
-        self._pending: dict[int, SimpleQueue[_AgentReply]] = {}
+        self._pending: dict[int, tuple[int, SimpleQueue[_AgentReply]]] = {}
         self._played_states: set[GameStateKey] = {state.search_key()}
         self._board_repeated = False
         self._last_actions: dict[int, str] = {}
         self._check_finished()
 
-    def update(self, now_ms: int) -> None:
+    def update(self, now_ms: int) -> dict[int, str] | None:
         if self.message is not None:
             return
 
@@ -42,18 +49,20 @@ class Match:
             return
 
         replies = {}
-        for player, queue in self._pending.items():
+        for player, (decision_tick, queue) in tuple(self._pending.items()):
             try:
-                replies[player] = queue.get_nowait()
+                reply = queue.get_nowait()
             except Empty:
                 continue
-        for player in replies:
             del self._pending[player]
+            if decision_tick == self.tick:
+                replies[player] = reply
 
-        self._apply_replies(replies)
+        actions = self._apply_replies(replies, fill_missing=True)
         self._next_tick_at = now_ms + self.turn_ms
         if self.message is None:
             self._request_actions()
+        return actions
 
     def play_tick(
         self, planned_actions: dict[int, str] | None = None
@@ -80,22 +89,27 @@ class Match:
     _agent_state = agent_state
 
     def _request_actions(self) -> None:
+        budget_ms = self.turn_ms * config.LIVE_SEARCH_BUDGET_FRACTION
         for player in self.agents:
             if player not in self._pending:
-                self._pending[player] = self._start_search(player)
+                self._pending[player] = (self.tick, self._start_search(player, budget_ms))
 
-    def _start_search(self, player: int) -> SimpleQueue[_AgentReply]:
+    def _start_search(
+        self, player: int, budget_ms: float | None = None
+    ) -> SimpleQueue[_AgentReply]:
         queue: SimpleQueue[_AgentReply] = SimpleQueue()
         Thread(
             target=self._request_action,
-            args=(player, self.agent_state(player), queue),
+            args=(player, self.agent_state(player), queue, budget_ms),
             daemon=True,
         ).start()
         return queue
 
-    def _apply_replies(self, replies: dict[int, _AgentReply]) -> dict[int, str] | None:
+    def _apply_replies(
+        self, replies: dict[int, _AgentReply], *, fill_missing: bool = False
+    ) -> dict[int, str] | None:
         actions = {}
-        for player, (action, error, original_legal) in replies.items():
+        for player, (action, error, original_legal, _) in replies.items():
             player_name = config.PLAYER_NAMES[player]
             if error is not None:
                 self.message = f"Player {player_name} agent error. See the terminal."
@@ -111,10 +125,18 @@ class Match:
             if action in self.rules.actions(self.state, player):
                 actions[player] = action
 
-        return self._advance_tick(actions)
+        if fill_missing:
+            for player in self.agents:
+                actions.setdefault(player, Action.STAY.value)
+        first_reply = None
+        if self.rules.prioritize_first_reply and len(replies) == 2:
+            first_reply = min(replies, key=lambda player: (replies[player].finished_at_ns, player))
+        return self._advance_tick(actions, first_reply=first_reply)
 
-    def _advance_tick(self, actions: dict[int, str]) -> dict[int, str]:
-        self.state = self.rules.result_tick(self.state, actions)
+    def _advance_tick(
+        self, actions: dict[int, str], *, first_reply: int | None = None
+    ) -> dict[int, str]:
+        self.state = self.rules.result_tick(self.state, actions, first_reply=first_reply)
         self._last_actions = actions.copy()
         key = self.state.search_key()
         self._board_repeated = key in self._played_states
@@ -137,12 +159,20 @@ class Match:
         player: int,
         state: GameState,
         replies: SimpleQueue[_AgentReply],
+        budget_ms: float | None,
     ) -> None:
-        replies.put(self._choose_action(player, state))
+        replies.put(self._choose_action(player, state, budget_ms))
 
-    def _choose_action(self, player: int, state: GameState) -> _AgentReply:
+    def _choose_action(
+        self, player: int, state: GameState, budget_ms: float | None
+    ) -> _AgentReply:
         legal = self.rules.actions(state, player)
+        agent = self.agents[player]
         try:
-            return self.agents[player].choose_action(state), None, legal
+            if budget_ms is not None and isinstance(agent, SearchAgent):
+                action = agent.choose_action_with_budget(state, budget_ms)
+            else:
+                action = agent.choose_action(state)
+            return _AgentReply(action, None, legal, perf_counter_ns())
         except Exception as error:
-            return None, f"{type(error).__name__}: {error}", legal
+            return _AgentReply(None, f"{type(error).__name__}: {error}", legal, perf_counter_ns())
