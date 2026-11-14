@@ -11,10 +11,10 @@ from pathlib import Path
 from time import perf_counter
 
 from . import config
-from .agents.loader import load_agent
+from .agents.loader import AgentLoader
 from .game.match import Match
 from .game.rules import GameRules
-from .game.state import create_initial_state
+from .game.state import GameState
 
 
 GAMES_PER_ROW = 10
@@ -100,7 +100,7 @@ class Statistics:
 
 
 def load_benchmark_map(map_name):
-    state = create_initial_state(MAPS / map_name)
+    state = GameState.from_map(MAPS / map_name)
     for entity in (*state.tanks.values(), *state.bases.values()):
         entity.hp = INITIAL_BENCHMARK_HP
     return state
@@ -112,10 +112,10 @@ def play_game(sender, experiment, side, seed, max_cycles):
         try:
             rules = GameRules()
             state = load_benchmark_map(experiment.map_name)
-            agent = load_agent(experiment.agent, rules, depth_limit=experiment.depth)
+            agent = AgentLoader.load(experiment.agent, rules, depth_limit=experiment.depth)
             opponent = None
             if experiment.fixed_opponent:
-                opponent = load_agent(
+                opponent = AgentLoader.load(
                     config.HEURISTIC_ALPHA_BETA_AGENT, rules, depth_limit=FIXED_OPPONENT_DEPTH,
                 )
             rng = random.Random(seed)

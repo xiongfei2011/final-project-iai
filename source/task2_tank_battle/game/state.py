@@ -5,7 +5,7 @@ from typing import NamedTuple
 from .. import config
 from .actions import Direction
 from .entities import Base, Bullet, Position, Tank, Wall
-from .map_loader import MapLayout, load_map
+from .map_loader import MapLayout, MapLoader
 
 
 class GameStateKey(NamedTuple):
@@ -88,37 +88,41 @@ class GameState:
             bullets=[replace(bullet) for bullet in self.bullets],
         )
 
+    @classmethod
+    def from_map(cls, map_path: str | Path | None = None) -> "GameState":
+        path = config.DEFAULT_MAP_PATH if map_path is None else map_path
+        return cls.from_layout(MapLoader.load(path))
 
-def create_initial_state(map_path: str | Path | None = None) -> GameState:
-    path = config.DEFAULT_MAP_PATH if map_path is None else map_path
-    return create_state_from_layout(load_map(path))
+    @classmethod
+    def from_layout(cls, layout: MapLayout) -> "GameState":
+        tanks = {
+            player: Tank(
+                position=Position(*position),
+                direction=Direction(config.INITIAL_TANK_DIRECTIONS[player]),
+                hp=config.TANK_INITIAL_HP,
+            )
+            for player, position in enumerate(layout.tank_positions)
+        }
 
+        bases = {
+            player: Base(position=Position(*position), hp=config.BASE_INITIAL_HP)
+            for player, position in enumerate(layout.base_positions)
+        }
 
-def create_state_from_layout(layout: MapLayout) -> GameState:
-    tanks = {
-        player: Tank(
-            position=Position(*position),
-            direction=Direction(config.INITIAL_TANK_DIRECTIONS[player]),
-            hp=config.TANK_INITIAL_HP,
+        wall_positions = (Position(*position) for position in layout.wall_positions)
+        walls = {
+            position: Wall(position=position, hp=config.WALL_INITIAL_HP)
+            for position in wall_positions
+        }
+
+        return cls(
+            game_map=GameMap(height=layout.height, width=layout.width, walls=walls),
+            tanks=tanks,
+            bullets=[],
+            bases=bases,
+            current_turn=config.FIRST_PLAYER,
         )
-        for player, position in enumerate(layout.tank_positions)
-    }
 
-    bases = {
-        player: Base(position=Position(*position), hp=config.BASE_INITIAL_HP)
-        for player, position in enumerate(layout.base_positions)
-    }
 
-    wall_positions = (Position(*position) for position in layout.wall_positions)
-    walls = {
-        position: Wall(position=position, hp=config.WALL_INITIAL_HP)
-        for position in wall_positions
-    }
-
-    return GameState(
-        game_map=GameMap(height=layout.height, width=layout.width, walls=walls),
-        tanks=tanks,
-        bullets=[],
-        bases=bases,
-        current_turn=config.FIRST_PLAYER,
-    )
+create_initial_state = GameState.from_map
+create_state_from_layout = GameState.from_layout

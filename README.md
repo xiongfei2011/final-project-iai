@@ -53,7 +53,7 @@ python -B -m task2_tank_battle.benchmark --suite c
 ### Tank Battle Pygame
 
 ```powershell
-python -B -m task2_tank_battle.main
+python -m task2_tank_battle.main
 ```
 
 To select a different map:
@@ -62,4 +62,8 @@ To select a different map:
 python -B -m task2_tank_battle.main --map task2_tank_battle/maps/example.txt
 ```
 
-Press Space to start or pause. When you push start button, you have to wait for searching.
+Press Space to start or pause. Live play is the default. To plan the match before playback, run:
+
+```powershell
+python -m task2_tank_battle.main --replay
+```

@@ -5,10 +5,10 @@ from functools import partial
 from pathlib import Path
 
 from . import config
-from .agents.loader import load_agent
+from .agents.loader import AgentLoader
 from .game.match import Match
 from .game.rules import GameRules
-from .game.state import GameState, create_initial_state
+from .game.state import GameState
 from .ui.match_session import MatchSession
 from .ui.pygame_app import run_window
 
@@ -26,7 +26,7 @@ def parse_standard_depth(value: str) -> int | None:
 
 
 def create_demo_state() -> GameState:
-    state = create_initial_state(config.MAPS_DIR / "benchmark" / f"{config.DEMO_SCENARIO}.txt")
+    state = GameState.from_map(config.MAPS_DIR / "benchmark" / f"{config.DEMO_SCENARIO}.txt")
     for base in state.bases.values():
         base.hp = 1
     return state
@@ -37,13 +37,13 @@ def main() -> None:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--preview", action="store_true", help="Show the initial board")
     mode.add_argument(
-        "--live", action="store_true", help="Play while the agents are choosing"
+        "--live", action="store_true", help="Play with a time budget for each AI decision (default)"
     )
     mode.add_argument(
         "--replay", dest="live", action="store_false",
-        help="Plan the match after pressing Play, then show the replay (default)",
+        help="Plan the match after pressing Play, then show the replay",
     )
-    parser.set_defaults(live=False)
+    mode.set_defaults(live=True)
     board = parser.add_mutually_exclusive_group()
     board.add_argument(
         "--demo",
@@ -98,9 +98,9 @@ def main() -> None:
         parser.error(f"--tank-a-hp must be between 1 and {config.TANK_INITIAL_HP}")
     standard_depth = getattr(args, "standard_depth", args.depth)
 
-    rules = GameRules()
+    rules = GameRules(prioritize_first_reply=True)
     map_loaders = {
-        path.name: partial(create_initial_state, path)
+        path.name: partial(GameState.from_map, path)
         for path in sorted(config.MAPS_DIR.glob("*.txt"))
         if path.is_file()
     }
@@ -112,7 +112,7 @@ def main() -> None:
         map_name = map_path.name
         if map_name in map_loaders and (config.MAPS_DIR / map_name).resolve() != map_path:
             map_name = str(map_path)
-        map_loaders[map_name] = partial(create_initial_state, map_path)
+        map_loaders[map_name] = partial(GameState.from_map, map_path)
 
     if args.tank_a_hp is not None:
         load_selected_map = map_loaders[map_name]
@@ -136,7 +136,7 @@ def main() -> None:
             if spec in (config.MINIMAX_AGENT, config.ALPHA_BETA_AGENT):
                 depth_limit = standard_depth
             try:
-                agents[player] = load_agent(spec, rules, depth_limit=depth_limit)
+                agents[player] = AgentLoader.load(spec, rules, depth_limit=depth_limit)
             except Exception as error:
                 name = config.PLAYER_NAMES[player]
                 raise ValueError(f"Could not load Player {name} agent {spec!r}: {error}") from error

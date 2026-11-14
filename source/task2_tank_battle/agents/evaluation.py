@@ -1,4 +1,6 @@
 from collections import deque
+from collections.abc import Iterator, Set
+from contextlib import contextmanager
 from dataclasses import dataclass
 from math import ceil
 from typing import Protocol
@@ -40,6 +42,13 @@ class EvaluationWeights:
     base_defense: float = BASE_DEFENSE_WEIGHT
 
 
+_WallLayout = frozenset[tuple[Position, int]]
+_AttackPath = tuple[
+    int, int, _WallLayout, Position, Direction, Position, frozenset[Position], int | None
+]
+_BasePath = tuple[int, int, frozenset[Position], Position]
+
+
 class HeuristicEvaluator:
 
     def __init__(
@@ -47,6 +56,19 @@ class HeuristicEvaluator:
     ) -> None:
         self._rules = rules
         self._weights = weights
+        self._attack_costs: dict[_AttackPath, int | None] | None = None
+        self._base_distance_maps: dict[_BasePath, dict[Position, int]] | None = None
+
+    @contextmanager
+    def reuse_pathfinding(self) -> Iterator[None]:
+        # Reuse paths across the boards and depths in one timed decision.
+        self._attack_costs = {}
+        self._base_distance_maps = {}
+        try:
+            yield
+        finally:
+            self._attack_costs = None
+            self._base_distance_maps = None
 
     def evaluate(self, state: GameState, max_player: int) -> float:
         # Combine weighted features into a score from MAX's perspective.
@@ -226,14 +248,36 @@ class HeuristicEvaluator:
             return None
 
         start = (tank.position, tank.direction)
-        queue = deque([(start, 0)])
-        visited = {start}
         board = state.game_map
-        occupied = {
+        target_position = target_entity.position
+        occupied = frozenset((
             state.tanks[opponent].position,
             state.bases[player].position,
             state.bases[opponent].position,
-        }
+        ))
+        costs = self._attack_costs
+        if costs is None:
+            return self._find_attack_cost(board, start, target_position, occupied, max_moves)
+
+        # Wall HP matters because the path can include shots to clear a wall.
+        walls = frozenset((position, wall.hp) for position, wall in board.walls.items()
+                          if not wall.is_destroyed)
+        key = (board.height, board.width, walls, *start, target_position, occupied, max_moves)
+        if key not in costs:
+            costs[key] = self._find_attack_cost(board, start, target_position, occupied, max_moves)
+        return costs[key]
+
+    def _find_attack_cost(
+        self,
+        board: GameMap,
+        start: tuple[Position, Direction],
+        target_position: Position,
+        occupied: frozenset[Position],
+        max_moves: int | None,
+    ) -> int | None:
+        # Run the firing-position search for this board layout.
+        queue = deque([(start, 0)])
+        visited = {start}
         best_cost = None
 
         while queue:
@@ -242,7 +286,7 @@ class HeuristicEvaluator:
                 return best_cost
 
             wall_shots = self._shots_to_clear_line(
-                board, position, direction, target_entity.position, occupied
+                board, position, direction, target_position, occupied
             )
 
             if wall_shots == 0:
@@ -278,7 +322,7 @@ class HeuristicEvaluator:
         position: Position,
         direction: Direction,
         target_position: Position,
-        occupied: set[Position],
+        occupied: Set[Position],
     ) -> int | None:
         # Count shots needed to clear walls between the shooter and the target.
         target = position
@@ -317,9 +361,23 @@ class HeuristicEvaluator:
     def _base_distances(self, state: GameState, player: int) -> dict[Position, int]:
         # Use BFS to measure distances from the base through cells without walls.
         base_position = state.bases[player].position
+        board = state.game_map
+        distance_maps = self._base_distance_maps
+        if distance_maps is None:
+            return self._find_base_distances(board, base_position)
+
+        blocked = frozenset(position for position, wall in board.walls.items()
+                            if not wall.is_destroyed)
+        key = (board.height, board.width, blocked, base_position)
+        if key not in distance_maps:
+            distance_maps[key] = self._find_base_distances(board, base_position)
+        return distance_maps[key]
+
+    @staticmethod
+    def _find_base_distances(board: GameMap, base_position: Position) -> dict[Position, int]:
+        # Flood the walkable cells starting at the base.
         distances = {base_position: 0}
         queue = deque([base_position])
-        board = state.game_map
 
         while queue:
             current = queue.popleft()
