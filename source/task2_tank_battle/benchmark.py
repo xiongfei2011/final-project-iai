@@ -1,136 +1,196 @@
-"""Compare the four search configurations on finite tank battle positions.
-
-Run from source with python -m task2_tank_battle.benchmark --help.
-"""
+"""Compare Tank Battle search agents in headless matches."""
 
 import argparse
 import csv
 import math
 import multiprocessing
-import sys
-import time
-from dataclasses import asdict, dataclass, fields
+import random
+from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
-from statistics import median
+from time import perf_counter
 
-from .agents.search import (
-    create_alpha_beta_agent,
-    create_heuristic_minimax_agent,
-    create_heuristic_minimax_alpha_beta_agent,
-    create_minimax_agent,
-)
-from .config import BASE_INITIAL_HP, DEFAULT_SEARCH_DEPTH, MAPS_DIR
+from . import config
+from .agents.loader import load_agent
+from .game.match import Match
 from .game.rules import GameRules
-from .game.state import GameState, create_initial_state
+from .game.state import create_initial_state
 
 
-TITLE = "T2-03 - Tank Battle Search Benchmark"
+GAMES_PER_ROW = 10
+MAX_CYCLES = 50
+MOVE_TIMEOUT_MS = 20_000
+INITIAL_BENCHMARK_HP = 2
+FIXED_OPPONENT_DEPTH = 2
+MAPS = config.MAPS_DIR / "benchmark"
+HEURISTIC_AGENTS = (config.HEURISTIC_AGENT, config.HEURISTIC_ALPHA_BETA_AGENT)
 
-CONFIGURATIONS = {
-    "Minimax": (create_minimax_agent, False),
-    "Alpha-Beta": (create_alpha_beta_agent, False),
-    "Heuristic Minimax": (create_heuristic_minimax_agent, True),
-    "Heuristic Minimax + Alpha-Beta": (
-        create_heuristic_minimax_alpha_beta_agent,
-        True,
+
+@dataclass(frozen=True)
+class Experiment:
+    map_name: str
+    agent: str
+    depth: int | None
+    fixed_opponent: bool = False
+
+
+EXPERIMENTS = {
+    "A_MiniMap": (
+        Experiment("suite_mini.txt", config.MINIMAX_AGENT, None),
+        Experiment("suite_mini.txt", config.ALPHA_BETA_AGENT, None),
+        *(Experiment("suite_mini.txt", agent, 3) for agent in HEURISTIC_AGENTS),
+    ),
+    "B_StandardMap": tuple(
+        Experiment("suite_standard.txt", agent, depth)
+        for depth in (2, 3, 4)
+        for agent in HEURISTIC_AGENTS
+    ),
+    "C_ShortMap": (
+        Experiment("suite_short.txt", config.MINIMAX_AGENT, None),
+        Experiment("suite_short.txt", config.ALPHA_BETA_AGENT, None),
+    ),
+    "D_FixedOpponent": tuple(
+        Experiment("suite_fixed_opponent.txt", config.HEURISTIC_ALPHA_BETA_AGENT,
+                   depth, fixed_opponent=True)
+        for depth in (2, 3, 4)
     ),
 }
+COLUMNS = (
+    "suite", "agent", "depth", "avg_time_ms", "max_time_ms",
+    "avg_nodes", "avg_cutoffs", "avg_cycles", "win_draw_loss",
+)
 
 
-# Each entry gives the starting HP of both bases on its text map.
-SCENARIOS = {
-    "opening_win": 1,
-    "opening_draw": 1,
-    "opening_loss": 1,
-    "heuristic_cutoff": BASE_INITIAL_HP,
-}
+@dataclass
+class Statistics:
+    decisions: int = 0
+    total_ms: float = 0.0
+    max_ms: float = 0.0
+    nodes: int = 0
+    cutoffs: int = 0
+    cycles: int = 0
+    wins: int = 0
+    draws: int = 0
+    losses: int = 0
+
+    def record_decision(self, elapsed_ms, nodes, cutoffs):
+        self.decisions += 1
+        self.total_ms += elapsed_ms
+        self.max_ms = max(self.max_ms, elapsed_ms)
+        self.nodes += nodes
+        self.cutoffs += cutoffs
+
+    def record_result(self, outcome, cycles):
+        self.cycles += cycles
+        self.wins += int(outcome == 1)
+        self.draws += int(outcome == 0)
+        self.losses += int(outcome == -1)
+
+    def summary(self, suite, agent, depth):
+        completed = self.wins + self.draws + self.losses
+        return (
+            suite, agent, "none" if depth is None else depth,
+            self.total_ms / self.decisions if self.decisions else None,
+            self.max_ms if self.decisions else None,
+            self.nodes / self.decisions if self.decisions else None,
+            self.cutoffs / self.decisions if self.decisions else None,
+            self.cycles / completed if completed else None,
+            f"{self.wins}W-{self.draws}D-{self.losses}L",
+        )
 
 
-@dataclass(frozen=True)
-class Measurement:
-    elapsed_ms: float
-    states_visited: int
-    max_depth: int
-    action: str
-    value: float
-
-
-@dataclass(frozen=True)
-class ResultRow:
-    scenario: str
-    configuration: str
-    runs: int
-    completed_runs: int
-    median_ms: float | None
-    median_states_visited: float | None
-    median_max_depth: float | None
-    status: str
-    action: str | None
-    search_value: float | None
-    depth_limit: int
-    timeout_ms: float
-
-
-def create_scenario(name: str) -> GameState:
-    """Load a fresh opening for A to search, with no shots on the board."""
-    base_hp = SCENARIOS[name]
-    state = create_initial_state(MAPS_DIR / "benchmark" / f"{name}.txt")
-    for base in state.bases.values():
-        base.hp = base_hp
-    state.current_turn = 0
+def load_benchmark_map(map_name):
+    state = create_initial_state(MAPS / map_name)
+    for entity in (*state.tanks.values(), *state.bases.values()):
+        entity.hp = INITIAL_BENCHMARK_HP
     return state
 
 
-def create_agent(configuration, rules, depth):
-    factory, _ = CONFIGURATIONS[configuration]
-    return factory(rules, depth_limit=depth)
-
-
-def measure_search(sender, scenario, configuration, depth):
+def play_game(sender, experiment, side, seed, max_cycles):
+    """Play headlessly. Only the measured agent's decision is timed."""
     with sender:
         try:
             rules = GameRules()
-            state = create_scenario(scenario)
-            agent = create_agent(configuration, rules, depth)
-            legal_actions = rules.actions(state)
-            sender.send(("ready", None))
-
-            start = time.perf_counter()
-            action, value = agent.search(state)
-            elapsed_ms = (time.perf_counter() - start) * 1000
-
-            if action not in legal_actions:
-                raise ValueError(f"Search selected an illegal action: {action!r}")
-            sender.send(("ok", Measurement(
-                elapsed_ms, agent.states_visited, agent.max_depth, action, value
-            )))
+            state = load_benchmark_map(experiment.map_name)
+            agent = load_agent(experiment.agent, rules, depth_limit=experiment.depth)
+            opponent = None
+            if experiment.fixed_opponent:
+                opponent = load_agent(
+                    config.HEURISTIC_ALPHA_BETA_AGENT, rules, depth_limit=FIXED_OPPONENT_DEPTH,
+                )
+            rng = random.Random(seed)
+            match = Match(state, rules, {side: agent}, config.DEFAULT_TURN_MS)
+            seen = Counter({state.search_key(): 1})
+            while match.tick < max_cycles:
+                snapshot = match.agent_state(side)
+                sender.send(("search", "agent"))
+                start = perf_counter()
+                action = agent.choose_action(snapshot)
+                elapsed_ms = (perf_counter() - start) * 1000
+                if action not in rules.actions(match.state, side):
+                    raise ValueError(f"Illegal action: {action!r}")
+                sender.send(("decision", (
+                    elapsed_ms, agent.metrics.nodes_visited, agent.metrics.alpha_beta_cutoffs,
+                )))
+                opponent_actions = rules.actions(match.state, 1 - side)
+                if opponent is None:
+                    reply = rng.choice(opponent_actions)
+                else:
+                    opponent_state = match.agent_state(1 - side)
+                    sender.send(("search", "opponent"))
+                    start = perf_counter()
+                    reply = opponent.choose_action(opponent_state)
+                    sender.send(("opponent_decision", (perf_counter() - start) * 1000))
+                match.play_tick({side: action, 1 - side: reply})
+                if rules.terminal_test(match.state):
+                    sender.send(("result", (rules.utility(match.state, side), match.tick)))
+                    return
+                key = match.state.search_key()
+                seen[key] += 1
+                if seen[key] >= 3:
+                    break
+            sender.send(("result", (0, match.tick)))
+        except RecursionError:
+            sender.send(("interrupted", "Python recursion limit"))
         except Exception as error:
             sender.send(("error", f"{type(error).__name__}: {error}"))
 
 
-def run_trial(context, scenario, configuration, depth, timeout_ms):
+def run_game(context, statistics, experiment, side, seed, max_cycles, timeout_ms):
+    """Stop the worker if a single search exceeds its deadline."""
     receiver, sender = context.Pipe(duplex=False)
+    worker = context.Process(
+        target=play_game,
+        args=(sender, experiment, side, seed, max_cycles),
+    )
     with receiver, sender:
-        worker = context.Process(
-            target=measure_search, args=(sender, scenario, configuration, depth)
-        )
         worker.start()
         sender.close()
+        searching = None
         try:
-            if not receiver.poll(10):
-                raise RuntimeError("Worker did not finish setup within 10 seconds")
-            status, result = receiver.recv()
-            if status != "ready":
-                raise RuntimeError(result)
-
-            if not receiver.poll(timeout_ms / 1000):
-                return None
-            status, result = receiver.recv()
-            if status != "ok":
-                raise RuntimeError(result)
-            return result if result.elapsed_ms <= timeout_ms else None
+            while receiver.poll(timeout_ms / 1000 if searching else 20):
+                message, data = receiver.recv()
+                if message == "search":
+                    searching = data
+                elif message == "decision":
+                    if data[0] > timeout_ms:
+                        return "agent decision timeout"
+                    searching = None
+                    statistics.record_decision(*data)
+                elif message == "opponent_decision":
+                    if data > timeout_ms:
+                        return "opponent decision timeout"
+                    searching = None
+                elif message == "result":
+                    statistics.record_result(*data)
+                    return None
+                elif message == "interrupted":
+                    return data
+                elif message == "error":
+                    raise RuntimeError(data)
+            return f"{searching} decision timeout" if searching else "worker did not respond"
         except EOFError as error:
-            raise RuntimeError("Worker exited before reporting a result") from error
+            raise RuntimeError("Benchmark worker exited without a result") from error
         finally:
             if worker.is_alive():
                 worker.terminate()
@@ -138,135 +198,66 @@ def run_trial(context, scenario, configuration, depth, timeout_ms):
             worker.close()
 
 
-def summarize(scenario, configuration, runs, samples, depth, timeout_ms):
-    first = samples[0] if samples else None
-    if first and any(
-        sample.action != first.action or sample.value != first.value for sample in samples
-    ):
-        raise RuntimeError(f"Repeated searches disagree for {scenario} / {configuration}")
-
-    return ResultRow(
-        scenario=scenario,
-        configuration=configuration,
-        runs=runs,
-        completed_runs=len(samples),
-        median_ms=median(sample.elapsed_ms for sample in samples) if samples else None,
-        median_states_visited=median(sample.states_visited for sample in samples) if samples else None,
-        median_max_depth=median(sample.max_depth for sample in samples) if samples else None,
-        status="ok" if len(samples) == runs else "timeout",
-        action=first.action if first else None,
-        search_value=first.value if first else None,
-        depth_limit=depth,
-        timeout_ms=timeout_ms,
-    )
-
-
-def compare_pair(plain, pruned, depth):
-    label = f"{plain.scenario} / {plain.configuration} vs {pruned.configuration}"
-    if plain.search_value is None or pruned.search_value is None:
-        return f"{label}: comparison unavailable (timeout)"
-    if not math.isclose(plain.search_value, pruned.search_value, abs_tol=1e-12):
-        raise RuntimeError(f"{label}: different values {plain.search_value} and {pruned.search_value}")
-    if plain.action == pruned.action:
-        return f"{label}: {plain.action}, value {plain.search_value:g}"
-
-    # Check the pruned choice with a full window because a cutoff may return a bound.
-    rules = GameRules()
-    state = create_scenario(plain.scenario)
-    agent = create_agent(plain.configuration, rules, depth)
-    _, exact_value = agent.search(state, root_action=pruned.action)
-    if not math.isclose(exact_value, plain.search_value, abs_tol=1e-12):
-        raise RuntimeError(f"{label}: {pruned.action} is not tied for the best value")
-    return f"{label}: {plain.action} and {pruned.action} tie at {exact_value:g}"
-
-
-def print_table(rows):
-    def number(value, precision="g"):
-        return "" if value is None else format(value, precision)
-
-    table = [
-        ("Scenario", "Configuration", "Done/runs", "Median ms", "States",
-         "Depth", "Action", "Value", "Status")
-    ]
-    for row in rows:
-        table.append((
-            row.scenario,
-            row.configuration,
-            f"{row.completed_runs}/{row.runs}",
-            number(row.median_ms, ".3f"),
-            number(row.median_states_visited),
-            number(row.median_max_depth),
-            row.action or "",
-            number(row.search_value, ".6g"),
-            row.status,
-        ))
-    widths = [max(map(len, column)) for column in zip(*table)]
-    for row in table:
-        print("  ".join(value.ljust(width) for value, width in zip(row, widths)).rstrip())
-
-
-def write_csv(path, rows):
+def write_summary(path, rows):
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as output:
-        writer = csv.DictWriter(output, fieldnames=[field.name for field in fields(ResultRow)])
-        writer.writeheader()
-        writer.writerows(asdict(row) for row in rows)
+        writer = csv.writer(output)
+        writer.writerow(COLUMNS)
+        writer.writerows(rows)
+
+    print("\n| " + " | ".join(COLUMNS) + " |")
+    print("| " + " | ".join("---" for _ in COLUMNS) + " |")
+    for row in rows:
+        display = ["-" if value is None else f"{value:.3f}" if isinstance(value, float)
+                   else str(value) for value in row]
+        print("| " + " | ".join(display) + " |")
+    print(f"\nCSV saved to {path}")
 
 
 def main():
-    parser = argparse.ArgumentParser(description=TITLE)
-    parser.add_argument("--runs", type=int, default=5, help="Repetitions per configuration")
+    parser = argparse.ArgumentParser(description="Headless Tank Battle benchmark")
+    parser.add_argument("--suite", choices=("a", "b", "c", "d", "all"), default="all")
+    parser.add_argument("--runs", type=int, default=GAMES_PER_ROW, help="Games per row")
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--max-ticks", type=int, default=MAX_CYCLES)
     parser.add_argument(
-        "--depth", type=int, default=DEFAULT_SEARCH_DEPTH,
-        help="Shared search depth limit in ticks",
+        "--timeout-ms", type=float, default=MOVE_TIMEOUT_MS,
+        help="Deadline per decision in ms (default: %(default)s)",
     )
-    parser.add_argument("--timeout-ms", type=float, default=2000, help="Search deadline per run in ms")
-    parser.add_argument("--csv", type=Path, default=Path(__file__).with_name("benchmark_results.csv"))
+    parser.add_argument("--output-dir", type=Path, default=Path(__file__).parent)
     args = parser.parse_args()
-    if args.runs < 1 or args.depth < 1:
-        parser.error("--runs and --depth must be positive integers")
+    if not 1 <= args.runs <= 2**31 or args.max_ticks < 1:
+        parser.error("--runs and --max-ticks must be positive")
     if not math.isfinite(args.timeout_ms) or args.timeout_ms <= 0:
         parser.error("--timeout-ms must be finite and positive")
 
-    print(TITLE)
-    print(f"Runs per configuration: {args.runs} | Search depth limit: {args.depth} | "
-          f"Timeout per run: {args.timeout_ms:g} ms", flush=True)
     context = multiprocessing.get_context("spawn")
+    seeds = random.Random(args.seed).sample(range(2**31), args.runs)
     rows = []
-    comparisons = []
-    for scenario in SCENARIOS:
-        by_configuration = {}
-        for configuration in CONFIGURATIONS:
-            samples = []
-            for _ in range(args.runs):
-                try:
-                    sample = run_trial(context, scenario, configuration, args.depth, args.timeout_ms)
-                except RuntimeError as error:
-                    raise RuntimeError(f"{scenario} / {configuration}: {error}") from error
-                if sample is not None:
-                    samples.append(sample)
-            row = summarize(scenario, configuration, args.runs, samples, args.depth, args.timeout_ms)
-            by_configuration[configuration] = row
-            rows.append(row)
-
-        for plain, pruned in (
-            ("Minimax", "Alpha-Beta"),
-            ("Heuristic Minimax", "Heuristic Minimax + Alpha-Beta"),
-        ):
-            comparisons.append(compare_pair(by_configuration[plain], by_configuration[pruned], args.depth))
-
-    print("States count the root at depth 0 and every visited search node, including leaves.")
-    print("One tick applies both players' actions and moves bullets up to three cells.")
-    print("Time, states and depth use medians of completed runs.")
-    print("Any timed-out run marks its row as timeout. Metrics are blank when no run completes.")
-    print_table(rows)
-    print("\nSearch value checks")
-    for comparison in comparisons:
-        print(comparison)
-    write_csv(args.csv, rows)
-    print(f"\nCSV saved to {args.csv}")
+    for suite, experiments in EXPERIMENTS.items():
+        if args.suite not in ("all", suite[0].lower()):
+            continue
+        for experiment in experiments:
+            opponent = (
+                f"{config.HEURISTIC_ALPHA_BETA_AGENT} depth {FIXED_OPPONENT_DEPTH}"
+                if experiment.fixed_opponent else "Random"
+            )
+            print(
+                f"{suite} | {experiment.agent} depth {experiment.depth} vs {opponent}"
+                f" | {args.runs} games | {args.timeout_ms:g} ms per decision",
+                flush=True,
+            )
+            statistics = Statistics()
+            for index, seed in enumerate(seeds):
+                interruption = run_game(
+                    context, statistics, experiment, index % 2,
+                    seed, args.max_ticks, args.timeout_ms,
+                )
+                if interruption:
+                    print(f"  Game {index + 1}: {interruption}", flush=True)
+            rows.append(statistics.summary(suite, experiment.agent, experiment.depth))
+    write_summary(args.output_dir / "benchmark_summary.csv", rows)
 
 
 if __name__ == "__main__":
-    sys.stdout.reconfigure(errors="backslashreplace")
     main()

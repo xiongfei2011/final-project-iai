@@ -71,7 +71,8 @@ class Match:
         replies = {player: queue.get() for player, queue in searches.items()}
         return self._apply_replies(replies)
 
-    def _agent_state(self, player: int) -> GameState:
+    def agent_state(self, player: int) -> GameState:
+        """Build the current decision snapshot from the player's perspective."""
         snapshot = self.state.clone()
         snapshot.current_turn = player
         snapshot.previous_action = self._last_actions.get(player)
@@ -80,6 +81,8 @@ class Match:
             if self._board_repeated else frozenset()
         )
         return snapshot
+
+    _agent_state = agent_state
 
     def _request_actions(self) -> None:
         for player in self.agents:
@@ -90,7 +93,7 @@ class Match:
         queue: SimpleQueue[_AgentReply] = SimpleQueue()
         Thread(
             target=self._request_action,
-            args=(player, self._agent_state(player), queue),
+            args=(player, self.agent_state(player), queue),
             daemon=True,
         ).start()
         return queue

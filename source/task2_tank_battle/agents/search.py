@@ -9,6 +9,7 @@ from ..game.actions import Action
 from ..game.rules import GameRules
 from ..game.state import GameState, GameStateKey
 from .evaluation import Evaluator, HeuristicEvaluator
+from .metrics import SearchMetrics
 
 
 @runtime_checkable
@@ -25,7 +26,6 @@ class SearchAgent(ABC):
         depth_limit: int | None,
         *,
         evaluator: Evaluator | None = None,
-        opponent_model: Agent | None = None,
     ) -> None:
         if depth_limit is None and evaluator is not None:
             raise ValueError("Heuristic search requires a depth limit")
@@ -34,15 +34,20 @@ class SearchAgent(ABC):
         self.rules = rules
         self.depth_limit = depth_limit
         self.evaluator = evaluator
-        self.states_visited = 0
-        self.max_depth = 0
-        self.opponent_model = opponent_model
+        self.metrics = SearchMetrics()
+
+    @property
+    def states_visited(self) -> int:
+        return self.metrics.nodes_visited
+
+    @property
+    def max_depth(self) -> int:
+        return self.metrics.max_depth
 
     def search(
         self, state: GameState, *, root_action: str | None = None
     ) -> tuple[str | None, float]:
-        self.states_visited = 1  # The root is visited at depth 0.
-        self.max_depth = 0
+        self.metrics = SearchMetrics(nodes_visited=1)  # The root is at depth 0.
         max_player = state.current_turn
         actions = self.rules.actions(state, max_player)
 
@@ -57,8 +62,8 @@ class SearchAgent(ABC):
             if state.played_states:
                 actions = self._prefer_new_boards(state, max_player, actions)
             if state.previous_action in actions:
-                # Keep the earlier action on a score tie, so try the last action last.
                 actions = sorted(actions, key=lambda action: action == state.previous_action)
+
         return self._best_action(
             state, max_player, actions, -inf, inf, depth=0, visited_states=set()
         )
@@ -89,14 +94,14 @@ class SearchAgent(ABC):
         depth: int,
         visited_states: set[GameStateKey],
     ) -> tuple[str | None, float]:
-        replies = self._opponent_replies(state, max_player)
+        replies = self.rules.actions(state, 1 - max_player)
         best_action = None
         best_score = -inf
         state_key = state.search_key()
         visited_states.add(state_key)
 
         try:
-            for action in actions:
+            for index, action in enumerate(actions):
                 score = self._action_value(
                     state,
                     max_player,
@@ -113,6 +118,7 @@ class SearchAgent(ABC):
                     alpha, beta, best_score, maximizing=True
                 )
                 if beta <= alpha:
+                    self.metrics.alpha_beta_cutoffs += int(index + 1 < len(actions))
                     break
         finally:
             # Backtrack so sibling branches can evaluate this board independently.
@@ -132,7 +138,7 @@ class SearchAgent(ABC):
     ) -> float:
         worst_score = inf
 
-        for reply in replies:
+        for index, reply in enumerate(replies):
             child = self.rules.result_tick(
                 state, {max_player: action, 1 - max_player: reply}
             )
@@ -144,6 +150,7 @@ class SearchAgent(ABC):
                 alpha, beta, worst_score, maximizing=False
             )
             if beta <= alpha:
+                self.metrics.alpha_beta_cutoffs += int(index + 1 < len(replies))
                 break
         return worst_score
 
@@ -157,8 +164,7 @@ class SearchAgent(ABC):
         visited_states: set[GameStateKey],
     ) -> float:
 
-        self.states_visited += 1
-        self.max_depth = max(self.max_depth, depth)
+        self.metrics.visit(depth)
 
         if state.search_key() in visited_states:
             return 0.0
@@ -170,25 +176,10 @@ class SearchAgent(ABC):
             return 0.0
 
         actions = self.rules.actions(state, max_player)
+
         return self._best_action(
             state, max_player, actions, alpha, beta, depth, visited_states
         )[1]
-
-    def _opponent_replies(self, state: GameState, max_player: int) -> list[str]:
-        opponent = 1 - max_player
-        legal_replies = self.rules.actions(state, opponent)
-
-        if self.opponent_model is None or not legal_replies:
-            return legal_replies
-
-        opponent_state = state.clone()
-        opponent_state.current_turn = opponent
-        predicted_action = self.opponent_model.choose_action(opponent_state)
-
-        if predicted_action in legal_replies:
-            return [predicted_action]
-
-        return legal_replies
 
     @abstractmethod
     def _update_bounds(
