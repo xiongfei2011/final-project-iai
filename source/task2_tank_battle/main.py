@@ -25,6 +25,13 @@ def parse_standard_depth(value: str) -> int | None:
     return depth
 
 
+def create_demo_state() -> GameState:
+    state = create_initial_state(config.MAPS_DIR / "benchmark" / f"{config.DEMO_SCENARIO}.txt")
+    for base in state.bases.values():
+        base.hp = 1
+    return state
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=f"{config.WINDOW_TITLE} - Pygame")
     mode = parser.add_mutually_exclusive_group()
@@ -48,6 +55,12 @@ def main() -> None:
         dest="map_path",
         type=Path,
         help="Text map path (default: bundled default.txt)",
+    )
+    parser.add_argument(
+        "--tank-a-hp",
+        type=int,
+        metavar="HP",
+        help="Starting HP for tank A on the selected map",
     )
     parser.add_argument(
         "--agent-a",
@@ -81,6 +94,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.depth < 1 or args.turn_ms < 1:
         parser.error("--depth and --turn-ms must be positive integers")
+    if args.tank_a_hp is not None and not 1 <= args.tank_a_hp <= config.TANK_INITIAL_HP:
+        parser.error(f"--tank-a-hp must be between 1 and {config.TANK_INITIAL_HP}")
     standard_depth = getattr(args, "standard_depth", args.depth)
 
     rules = GameRules()
@@ -90,16 +105,24 @@ def main() -> None:
         if path.is_file()
     }
     if args.demo:
-        from .benchmark import create_scenario
-
         map_name = "Demo"
-        map_loaders[map_name] = partial(create_scenario, config.DEMO_SCENARIO)
+        map_loaders[map_name] = create_demo_state
     else:
         map_path = (args.map_path or config.DEFAULT_MAP_PATH).resolve()
         map_name = map_path.name
         if map_name in map_loaders and (config.MAPS_DIR / map_name).resolve() != map_path:
             map_name = str(map_path)
         map_loaders[map_name] = partial(create_initial_state, map_path)
+
+    if args.tank_a_hp is not None:
+        load_selected_map = map_loaders[map_name]
+
+        def load_with_tank_a_hp() -> GameState:
+            state = load_selected_map()
+            state.tanks[0].hp = args.tank_a_hp
+            return state
+
+        map_loaders[map_name] = load_with_tank_a_hp
 
     try:
         state = map_loaders[map_name]()
