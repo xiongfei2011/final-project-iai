@@ -9,21 +9,16 @@ Features:
 """
 
 import math
-from collections import deque
 import pygame
-from pygame.math import Vector2, clamp, lerp
+from pygame.math import Vector2, clamp
 
 from .. import config
 from ..game.actions import Direction
 from ..game.entities import Position
 from ..game.state import GameState
 from .control_panel import ControlPanel, PanelState, draw_pixel_box
-from .effects import ParticleManager, ScreenShake
-from .geometry import (
-    lerp_angle,
-    lerp_color,
-    smootherstep,
-)
+from .effects import ParticleManager
+from .geometry import lerp_angle, smootherstep
 
 # Pixel Art Retro Arcade Palette
 RETRO_BG = (14, 16, 24)
@@ -95,9 +90,7 @@ class PygameView:
         self.board_y = max(padding, (window_height - board_height) // 2)
 
         # Fonts
-        self.title_font = pygame.font.Font(None, config.UI_TITLE_FONT_SIZE + 2)
         self.font = pygame.font.Font(None, config.UI_FONT_SIZE)
-        self.small_font = pygame.font.Font(None, max(14, min(18, self.cell_size // 4)))
         self.tiny_font = pygame.font.Font(None, 13)
 
         self.turn_ms = config.DEFAULT_TURN_MS
@@ -113,7 +106,6 @@ class PygameView:
     def _reset_dynamics(self, state: GameState) -> None:
         """Clear visual effects and snap entities to current board."""
         self.particle_mgr = ParticleManager()
-        self.screen_shake = ScreenShake(max_offset=0.0)
 
         now_ms = pygame.time.get_ticks()
         self.last_update_ms = now_ms

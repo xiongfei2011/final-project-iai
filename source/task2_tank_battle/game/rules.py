@@ -74,7 +74,6 @@ class GameRules:
                     destinations[player] = target
 
         next_state = state.clone()
-        next_state.expired_bullet_positions = ()
         next_state.bullet_flights = ()
         contested = len(destinations) == 2 and len(set(destinations.values())) == 1
 
@@ -115,7 +114,6 @@ class GameRules:
         }
         active = [(bullet.position, bullet) for bullet in state.bullets if bullet.steps_left > 0]
         flights: list[BulletFlight] = []
-        expired_positions: list[Position] = []
 
         for _ in range(BULLET_STEPS_PER_TURN):
             if not active:
@@ -136,8 +134,6 @@ class GameRules:
                 elif bullet.steps_left > 0:
                     moving.append((start, bullet))
                     continue
-                else:
-                    expired_positions.append(target)
                 flights.append(BulletFlight(start, target, bullet.owner))
 
             # Apply hits at the same distance step together before checking the result.
@@ -153,4 +149,3 @@ class GameRules:
         flights.extend(BulletFlight(start, bullet.position, bullet.owner) for start, bullet in active)
         state.bullets = [bullet for _, bullet in active]
         state.bullet_flights = tuple(flights)
-        state.expired_bullet_positions = tuple(expired_positions)

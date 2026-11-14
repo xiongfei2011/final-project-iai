@@ -9,23 +9,6 @@ import random
 import pygame
 from pygame.math import Vector2, clamp, lerp
 
-from .geometry import lerp_color
-
-
-class ScreenShake:
-    """Simulates camera trauma (kept at 0 for stable retro screen)."""
-
-    def __init__(self, max_offset: float = 0.0) -> None:
-        self.max_offset = max_offset
-        self.trauma: float = 0.0
-        self.offset = Vector2(0.0, 0.0)
-
-    def trigger(self, amount: float = 0.0) -> None:
-        pass
-
-    def update(self, dt: float, now_ms: int) -> None:
-        self.offset = Vector2(0.0, 0.0)
-
 
 class FloatingText:
     """Retro floating damage indicator that pops and arcs like classic arcade games."""

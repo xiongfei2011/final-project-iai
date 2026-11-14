@@ -3,7 +3,6 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from ..agents.search import SearchAgent
 from ..config import REPLAY_MAX_TURNS
 from .actions import Action
 from .match import Match
@@ -27,30 +26,16 @@ def record_match(
     match: Match,
     max_turns: int = REPLAY_MAX_TURNS,
     *,
-    reuse_known_actions: bool = False,
     stop_requested: Callable[[], bool] | None = None,
 ) -> Replay:
-    """Plan a match to its result or step limit before playing the frames.
-
-    Reuse decisions only for agents whose choices depend solely on the board.
-    """
+    """Plan a match to its result or step limit before playing the frames."""
     frames = [ReplayFrame(match.state.clone())]
-    can_reuse = reuse_known_actions and not any(
-        isinstance(agent, SearchAgent) for agent in match.agents.values()
-    )
 
     for _ in range(max_turns):
         if stop_requested is not None and stop_requested():
             return Replay(tuple(frames), "Planning canceled")
 
-        planned_actions = None
-        if can_reuse:
-            for index, frame in enumerate(frames[:-1]):
-                if frame.state == match.state:
-                    planned_actions = dict(frames[index + 1].actions)
-                    break
-
-        actions = match.play_tick(planned_actions)
+        actions = match.play_tick()
         if actions is None:
             break
 

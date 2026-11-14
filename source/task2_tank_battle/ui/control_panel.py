@@ -90,7 +90,6 @@ class ControlPanel:
         self._rect = rect
         self._heading = pygame.font.Font(None, config.UI_FONT_SIZE + 4)
         self._font = pygame.font.Font(None, config.UI_FONT_SIZE - 4)
-        self._small = pygame.font.Font(None, config.UI_FONT_SIZE - 7)
         self._tiny = pygame.font.Font(None, 14)
         self._open_selector: Selector | None = None
         self._option_offset = 0

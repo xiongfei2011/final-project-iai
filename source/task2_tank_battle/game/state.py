@@ -52,9 +52,6 @@ class GameState:
     # Agent snapshots use this as their perspective, not as a live turn lock.
     current_turn: int
     # Replay data is separate from active shots and from the search key.
-    expired_bullet_positions: tuple[Position, ...] = field(
-        default=(), compare=False, repr=False
-    )
     bullet_flights: tuple[BulletFlight, ...] = field(default=(), compare=False, repr=False)
     # Match supplies this history when the current board has already occurred.
     played_states: frozenset[GameStateKey] = field(
