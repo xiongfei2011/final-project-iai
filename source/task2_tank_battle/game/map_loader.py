@@ -1,5 +1,3 @@
-"""Read and validate a text map before creating a game state."""
-
 from dataclasses import dataclass
 from pathlib import Path
 

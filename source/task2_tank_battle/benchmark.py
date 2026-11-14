@@ -256,7 +256,7 @@ def main():
                 if interruption:
                     print(f"  Game {index + 1}: {interruption}", flush=True)
             rows.append(statistics.summary(suite, experiment.agent, experiment.depth))
-    write_summary(args.output_dir / "benchmark_summary.csv", rows)
+    write_summary(args.output_dir / "benchmark_result.csv", rows)
 
 
 if __name__ == "__main__":

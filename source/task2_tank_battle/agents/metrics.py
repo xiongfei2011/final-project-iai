@@ -1,5 +1,3 @@
-"""Counters for one completed or in-progress search."""
-
 from dataclasses import dataclass
 
 

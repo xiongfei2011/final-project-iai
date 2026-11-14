@@ -1,13 +1,3 @@
-"""Pixel-art retro arcade Pygame view for Tank Battle.
-
-Features:
-- Left-side retro arcade control panel with 3D beveled pixel buttons & cards
-- Full pixel-art aesthetics for tanks, bases, brick walls, and projectiles
-- Per-entity segmented pixel health bars directly on the battlefield
-- Damage hit-flash effects (white/red flashing) and floating '-1' combat numbers
-- Smooth quintic smootherstep motion interpolation for 60 FPS gameplay
-"""
-
 import math
 import pygame
 from pygame.math import Vector2, clamp

@@ -1,5 +1,3 @@
-"""Legal moves and state transitions for tank battle."""
-
 from ..config import BULLET_STEPS_PER_TURN
 from .actions import MOVE_ACTIONS, Action
 from .entities import Bullet, Damageable, Position
@@ -9,7 +7,6 @@ from .state import BulletFlight, GameState
 class GameRules:
 
     def actions(self, state: GameState, player: int | None = None) -> list[str]:
-        """Return the legal actions for a player on the current board."""
         if self.terminal_test(state):
             return []
 
@@ -30,11 +27,9 @@ class GameRules:
         return legal_actions
 
     def terminal_test(self, state: GameState) -> bool:
-        """Return whether a tank or a base has been destroyed."""
         return any(entity.is_destroyed for entity in (*state.tanks.values(), *state.bases.values()))
 
     def utility(self, state: GameState, player: int) -> int:
-        """Score a terminal state from the given player's perspective."""
         opponent = 1 - player
         player_lost = (
             state.tanks[player].is_destroyed or state.bases[player].is_destroyed

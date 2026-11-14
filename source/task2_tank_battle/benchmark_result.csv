@@ -1,0 +1,16 @@
+suite,agent,depth,avg_time_ms,max_time_ms,avg_nodes,avg_cutoffs,avg_cycles,win_draw_loss
+A_MiniMap,minimax,none,,,,,,0W-0D-0L
+A_MiniMap,alpha-beta,none,23.48657333,51.3895,370.6333333,266.05,6,10W-0D-0L
+A_MiniMap,heuristic,3,55.61761167,127.365,428.5,0,6,10W-0D-0L
+A_MiniMap,heuristic-alpha-beta,3,11.08142667,16.4263,84.18333333,49.26666667,6,10W-0D-0L
+B_StandardMap,heuristic,2,15.98454,50.4714,86.1375,0,8,10W-0D-0L
+B_StandardMap,heuristic-alpha-beta,2,6.77244125,12.7597,32.925,13.4375,8,10W-0D-0L
+B_StandardMap,heuristic,3,125.5680225,548.0976,630.375,0,8,10W-0D-0L
+B_StandardMap,heuristic-alpha-beta,3,22.28034125,50.813,115.2,52.8625,8,10W-0D-0L
+B_StandardMap,heuristic,4,1013.872194,5845.7589,5006.2375,0,8,10W-0D-0L
+B_StandardMap,heuristic-alpha-beta,4,78.1251925,424.5082,378.575,175.7,8,10W-0D-0L
+C_ShortMap,minimax,none,1383.294429,3607.9169,27115.19355,0,3.1,5W-0D-5L
+C_ShortMap,alpha-beta,none,8.04786129,19.2921,117.0967742,73.70967742,3.1,5W-0D-5L
+D_FixedOpponent,heuristic-alpha-beta,2,56.789108,137.6391,164.1,38.1,5,5W-0D-5L
+D_FixedOpponent,heuristic-alpha-beta,3,543.8378111,1262.0978,1452.5,403.1666667,9,5W-5D-0L
+D_FixedOpponent,heuristic-alpha-beta,4,2665.332056,9852.5868,7768.454545,1916.363636,5.5,5W-5D-0L

@@ -1,5 +1,3 @@
-"""Maximin search over simultaneous actions, with optional alpha-beta pruning."""
-
 from abc import ABC, abstractmethod
 from math import inf
 from typing import Protocol, runtime_checkable
@@ -185,7 +183,6 @@ class SearchAgent(ABC):
     def _update_bounds(
         self, alpha: float, beta: float, best_score: float, *, maximizing: bool
     ) -> tuple[float, float]:
-        """Return the bounds to use for the next child."""
         ...
 
     def choose_action(self, state: GameState) -> str | None:

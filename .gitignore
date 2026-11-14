@@ -169,7 +169,6 @@ venv.bak/
 
 # mkdocs/Zensical documentation
 /site
-benchmark_results.csv
 
 # mypy
 .mypy_cache/

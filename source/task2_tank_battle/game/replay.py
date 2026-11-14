@@ -1,5 +1,3 @@
-"""Record an AI match as a sequence of board states."""
-
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -28,7 +26,6 @@ def record_match(
     *,
     stop_requested: Callable[[], bool] | None = None,
 ) -> Replay:
-    """Plan a match to its result or step limit before playing the frames."""
     frames = [ReplayFrame(match.state.clone())]
 
     for _ in range(max_turns):

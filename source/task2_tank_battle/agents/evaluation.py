@@ -1,5 +1,3 @@
-"""Heuristic evaluation for nonterminal tank battle positions."""
-
 from collections import deque
 from dataclasses import dataclass
 from math import ceil
@@ -27,6 +25,7 @@ from ..game.state import GameMap, GameState
 
 class Evaluator(Protocol):
 
+    # Define how an evaluator scores a state for MAX.
     def evaluate(self, state: GameState, max_player: int) -> float: ...
 
 
@@ -50,6 +49,7 @@ class HeuristicEvaluator:
         self._weights = weights
 
     def evaluate(self, state: GameState, max_player: int) -> float:
+        # Combine weighted features into a score from MAX's perspective.
         min_player = 1 - max_player
 
         max_base_pressure = self._base_pressure(state, max_player)
@@ -103,17 +103,20 @@ class HeuristicEvaluator:
 
     @staticmethod
     def _hp_diff(state: GameState, max_player: int, min_player: int) -> int:
+        # Subtract MIN's total tank and base HP from MAX's.
         max_hp = state.tanks[max_player].hp + state.bases[max_player].hp
         min_hp = state.tanks[min_player].hp + state.bases[min_player].hp
         return max_hp - min_hp
 
     def _enemy_fire_actions(self, state: GameState, player: int) -> dict[int, str]:
+        # Return the enemy's FIRE command if it is legal.
         enemy = 1 - player
         if Action.FIRE in self._rules.actions(state, enemy):
             return {enemy: Action.FIRE.value}
         return {}
 
     def _after_enemy_fire(self, state: GameState, enemy_fire: dict[int, str]) -> GameState:
+        # Simulate one tick with the defending tank staying still.
         if enemy_fire or (state.bullets and not self._rules.terminal_test(state)):
             return self._rules.result_tick(state, enemy_fire)
         return state
@@ -121,6 +124,7 @@ class HeuristicEvaluator:
     def _dodge_risk(
         self, state: GameState, after_fire: GameState, player: int, enemy_fire: dict[int, str]
     ) -> float:
+        # Increase risk when fewer moves can avoid tank damage.
         if after_fire.tanks[player].hp >= state.tanks[player].hp:
             return 0.0
 
@@ -133,6 +137,7 @@ class HeuristicEvaluator:
         after_stay: GameState,
         player: int,
     ) -> bool:
+        # Check whether the simulated tick destroys the tank or base.
         if state.bases[player].hp > 0 and after_stay.bases[player].hp == 0:
             return True
 
@@ -140,6 +145,7 @@ class HeuristicEvaluator:
 
     @staticmethod
     def _firing_position_score(cost: int | None) -> float:
+        # Give higher scores to firing positions that take fewer turns to reach.
         if cost is None:
             return 0.0
         return 1 / (1 + cost)
@@ -151,7 +157,7 @@ class HeuristicEvaluator:
         base_attack_cost: int | None,
         enemy_fire: dict[int, str],
     ) -> float:
-        """Reward a reachable firing position when racing the enemy base is too slow."""
+        # Score a counterattack when racing the enemy base is too slow.
         opponent = 1 - player
         if opponent not in enemy_fire:
             return 0.0
@@ -186,6 +192,7 @@ class HeuristicEvaluator:
         return self._firing_position_score(cost)
 
     def _has_clear_tank_shot(self, state: GameState, player: int) -> bool:
+        # Check whether the current aim gives a clear shot at the enemy tank.
         shooter = state.tanks[player]
         target = state.tanks[1 - player]
         if shooter.is_destroyed or target.is_destroyed:
@@ -201,6 +208,7 @@ class HeuristicEvaluator:
         return wall_shots == 0
 
     def _base_attack_cost(self, state: GameState, player: int) -> int | None:
+        # Estimate the turns needed to get a clear shot at the enemy base.
         return self._attack_cost(state, player, state.bases[1 - player])
 
     def _attack_cost(
@@ -211,6 +219,7 @@ class HeuristicEvaluator:
         *,
         max_moves: int | None = None,
     ) -> int | None:
+        # Search positions and headings for a firing line with the lowest cost.
         opponent = 1 - player
         tank = state.tanks[player]
         if tank.is_destroyed or target_entity.is_destroyed:
@@ -229,13 +238,13 @@ class HeuristicEvaluator:
 
         while queue:
             (position, direction), distance = queue.popleft()
-            # Remaining firing positions need at least this many moves.
             if best_cost is not None and distance >= best_cost:
                 return best_cost
 
             wall_shots = self._shots_to_clear_line(
                 board, position, direction, target_entity.position, occupied
             )
+
             if wall_shots == 0:
                 return distance
             if max_moves is not None and distance >= max_moves:
@@ -271,7 +280,7 @@ class HeuristicEvaluator:
         target_position: Position,
         occupied: set[Position],
     ) -> int | None:
-        """Count shots needed to clear walls on a viable firing line."""
+        # Count shots needed to clear walls between the shooter and the target.
         target = position
         shots = 0
         for _ in range(BULLET_MAX_RANGE):
@@ -290,6 +299,7 @@ class HeuristicEvaluator:
         return None
 
     def _count_dodges(self, state: GameState, player: int, enemy_fire: dict[int, str]) -> int:
+        # Count movement commands that leave the tank's HP unchanged.
         current_hp = state.tanks[player].hp
         dodges = 0
         for action in self._rules.actions(state, player):
@@ -305,6 +315,7 @@ class HeuristicEvaluator:
         return dodges
 
     def _base_distances(self, state: GameState, player: int) -> dict[Position, int]:
+        # Use BFS to measure distances from the base through cells without walls.
         base_position = state.bases[player].position
         distances = {base_position: 0}
         queue = deque([base_position])
@@ -328,6 +339,7 @@ class HeuristicEvaluator:
         return distances
 
     def _base_pressure(self, state: GameState, player: int) -> float:
+        # Score the pressure on a base from the nearby enemy tank.
         enemy_position = state.tanks[1 - player].position
         distance = self._base_distances(state, player).get(enemy_position)
 

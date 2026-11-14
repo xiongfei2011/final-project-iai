@@ -1,5 +1,3 @@
-"""Load built-in and partner agents for tank battle matches."""
-
 from collections.abc import Callable
 from importlib import import_module
 

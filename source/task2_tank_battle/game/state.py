@@ -1,5 +1,3 @@
-"""Game state and construction from a validated map layout."""
-
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import NamedTuple
@@ -49,19 +47,14 @@ class GameState:
     tanks: dict[int, Tank]
     bullets: list[Bullet]
     bases: dict[int, Base]
-    # Agent snapshots use this as their perspective, not as a live turn lock.
     current_turn: int
-    # Replay data is separate from active shots and from the search key.
     bullet_flights: tuple[BulletFlight, ...] = field(default=(), compare=False, repr=False)
-    # Match supplies this history when the current board has already occurred.
     played_states: frozenset[GameStateKey] = field(
         default_factory=frozenset, compare=False, repr=False
     )
-    # Match records the previous tick's action for this agent's perspective.
     previous_action: str | None = field(default=None, compare=False, repr=False)
 
     def search_key(self) -> GameStateKey:
-        """Take a hashable snapshot of the fields that affect play."""
         return GameStateKey(
             dimensions=(self.game_map.height, self.game_map.width),
             current_turn=self.current_turn,

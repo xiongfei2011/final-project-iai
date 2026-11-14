@@ -1,5 +1,3 @@
-"""Coordinate independent agents and advance the shared game clock."""
-
 import sys
 from queue import Empty, SimpleQueue
 from threading import Thread
@@ -33,7 +31,6 @@ class Match:
         self._check_finished()
 
     def update(self, now_ms: int) -> None:
-        """Advance physics on schedule using whichever agents are ready."""
         if self.message is not None:
             return
 
@@ -61,7 +58,6 @@ class Match:
     def play_tick(
         self, planned_actions: dict[int, str] | None = None
     ) -> dict[int, str] | None:
-        """Apply a known decision or wait for both agents to choose one."""
         if self.message is not None:
             return None
         if planned_actions is not None:
@@ -72,7 +68,6 @@ class Match:
         return self._apply_replies(replies)
 
     def agent_state(self, player: int) -> GameState:
-        """Build the current decision snapshot from the player's perspective."""
         snapshot = self.state.clone()
         snapshot.current_turn = player
         snapshot.previous_action = self._last_actions.get(player)
