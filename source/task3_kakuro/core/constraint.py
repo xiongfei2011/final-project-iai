@@ -10,12 +10,6 @@ class SumConstraint(Constraint):
         super().__init__(scope)
         self.target_sum = target_sum
 
-    def __repr__(self):
-        return f"Sum({self.target_sum}, {self.scope})"
-
 class AllDiffConstraint(Constraint):
     def __init__(self, scope: list[Variable]):
         super().__init__(scope)
-
-    def __repr__(self):
-        return f"AllDiff({self.scope})"
