@@ -174,8 +174,8 @@ class Inference:
 
         return True, reduced_vars
 
-# TODO: unused
-def forward_checking(self, curr_var: tuple, curr_value: int, curr_domain: dict):
+    # TODO: use for LCV
+    def forward_checking(self, curr_var: tuple, curr_value: int, curr_domain: dict):
 
         new_domains = {}
         new_constraint = []
