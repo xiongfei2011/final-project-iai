@@ -1,4 +1,4 @@
-from config import EMPTY_CELL, WHITE
+from task3_kakuro.config import EMPTY_CELL, WHITE
 
 
 class GameState:

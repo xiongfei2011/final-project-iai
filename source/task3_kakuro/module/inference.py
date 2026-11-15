@@ -1,7 +1,7 @@
 
 import queue
-from core.csp_core import CSP
-from core.constraint import Constraint, SumConstraint, AllDiffConstraint
+from task3_kakuro.core.csp_core import CSP
+from task3_kakuro.core.constraint import Constraint, SumConstraint, AllDiffConstraint
 
 class Inference:
     def __init__(self, csp: CSP):

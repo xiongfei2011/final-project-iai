@@ -1,6 +1,6 @@
-from core.csp_core import CSP
-from core.variable import Variable
-from module.inference import Inference
+from task3_kakuro.core.csp_core import CSP
+from task3_kakuro.core.variable import Variable
+from task3_kakuro.module.inference import Inference
 
 
 class CSPSolver:

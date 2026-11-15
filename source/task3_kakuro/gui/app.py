@@ -1,14 +1,14 @@
 import pygame
 
-from gui.game_state import GameState
-from gui.render import Renderer
+from task3_kakuro.gui.game_state import GameState
+from task3_kakuro.gui.render import Renderer
 
 
 def run_history_viewer(
     original_grid,
     history,
     cell_size=60,
-    step_interval_ms=300,
+    step_interval_ms=180,
     solve_time_ms=0.0,
 ):
     if step_interval_ms <= 0:

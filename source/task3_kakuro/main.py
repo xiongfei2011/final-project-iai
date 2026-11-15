@@ -1,9 +1,9 @@
 from time import perf_counter
 
-import config
-from module.inference import Inference
-from module.solver import CSPSolver
-from utils.parser import Parse
+from task3_kakuro import config
+from task3_kakuro.module.inference import Inference
+from task3_kakuro.module.solver import CSPSolver
+from task3_kakuro.utils.parser import Parse
 
 
 def test():
@@ -50,7 +50,7 @@ def run():
         "Opening solver history viewer."
     )
 
-    from gui.app import run_history_viewer
+    from task3_kakuro.gui.app import run_history_viewer
 
     run_history_viewer(
         parser.grid,

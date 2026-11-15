@@ -1,6 +1,6 @@
 import pygame
 
-from config import (
+from task3_kakuro.config import (
     BLACK,
     CLUE_TEXT_COLOR,
     GRAY,

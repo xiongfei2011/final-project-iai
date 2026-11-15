@@ -1,5 +1,5 @@
 
-from core.variable import Variable
+from task3_kakuro.core.variable import Variable
 
 class Constraint:
     def __init__(self, scope: list[Variable]):

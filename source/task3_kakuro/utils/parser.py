@@ -1,8 +1,8 @@
 
-import config
-from core.constraint import Constraint, SumConstraint, AllDiffConstraint
-from core.csp_core import CSP
-from core.variable import Variable
+from task3_kakuro import config
+from task3_kakuro.core.constraint import Constraint, SumConstraint, AllDiffConstraint
+from task3_kakuro.core.csp_core import CSP
+from task3_kakuro.core.variable import Variable
 
 class Parse:
     def __init__(self, filepath: str):
