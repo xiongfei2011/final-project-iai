@@ -97,3 +97,14 @@ Press Space to start or pause. Live play is the default. To plan the match befor
 ```powershell
 python -m task2_tank_battle.main --replay
 ```
+
+### Kakuro
+
+```powershell
+python -m task3_kakuro.main
+```
+
+```bash
+#For Linux/MacOS
+python3 -m task3_kakuro.main
+```
