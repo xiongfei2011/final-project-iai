@@ -109,7 +109,7 @@ class NQueensNativeGame:
             fg=fg,
             padx=14,
             pady=7,
-            cursor="pointinghand",
+            cursor="hand2",
             highlightthickness=1,
             highlightbackground=self.BORDER if bg == self.BTN_SECONDARY else bg,
         )
