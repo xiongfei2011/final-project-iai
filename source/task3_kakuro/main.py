@@ -40,7 +40,16 @@ def run():
     start_time = perf_counter()
     solution = solver.solve()
     solve_time_ms = (perf_counter() - start_time) * 1000
+    assign_count = sum(
+        action == "ASSIGN" for _, _, action in solver.history
+    )
+    remove_count = sum(
+        action == "REMOVE" for _, _, action in solver.history
+    )
 
+    print(f"History events: {len(solver.history)}")
+    print(f"ASSIGN: {assign_count}")
+    print(f"REMOVE: {remove_count}")
     if solution is None:
         print(f"The Kakuro puzzle has no solution. Solve time: {solve_time_ms:.2f} ms")
         return
