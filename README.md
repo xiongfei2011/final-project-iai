@@ -60,6 +60,7 @@ python -B -m BE.app.benchmark
 ```
 
 #### 2. Pygame
+#### Require: Tkinter and tk
 
 ```powershell
 cd task1_nqueens
